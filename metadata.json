@@ -1,0 +1,6 @@
+{
+  "name": "Science of Gifts Writing Studio",
+  "description": "Sophisticated editorial writing studio for Science of Gifts creating thoughtful articles, gift guides, and product copy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
