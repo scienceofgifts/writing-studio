@@ -347,8 +347,13 @@ export default {
 
         if (ai && Array.isArray(availableLinks) && availableLinks.length > 0) {
           try {
-            const systemInstruction = `You are the lead editor. Identify opportunities to link internally to provided link resources. Return JSON.`;
-            const userPrompt = `Content:\n${documentContent}\n\nAvailable links:\n${JSON.stringify(availableLinks)}`;
+            const systemInstruction = `You are the lead senior editor for Science of Gifts. Identify 2 to 5 high-value opportunities to link internally to provided library articles.
+RULES:
+1. Recommend links ONLY when the target article genuinely enriches the sentence's subject matter.
+2. Strictly respect the Editorial Notes provided for each library article. Only recommend a link when the discussion matches the specific contextual relationship in the notes. Do NOT link when notes indicate it would be inappropriate or redundant.
+3. Natural anchor text (2-5 words). No generic phrases or keyword stuffing.
+4. Avoid duplicate links for already used URLs. Return JSON { opportunities: [...], rationale: "..." }.`;
+            const userPrompt = `Content:\n${documentContent}\n\nAvailable Links Library (Includes Editorial Notes):\n${JSON.stringify(availableLinks, null, 2)}`;
 
             const response = await ai.models.generateContent({
               model: modelToUse,
@@ -1560,6 +1565,416 @@ Respond ONLY with valid JSON:
           brief: fallbackBrief,
           modelUsed: 'heuristic-editorial-engine',
         }));
+      }
+
+      // ==========================================
+      // ENDPOINT: POST /api/links/fetch-metadata
+      // ==========================================
+      if (url.pathname === '/api/links/fetch-metadata') {
+        const targetUrl = (body.url || '').trim();
+        if (!targetUrl) {
+          return handleCors(request, Response.json({ ok: false, error: 'Please provide a valid destination URL.' }, { status: 400 }));
+        }
+
+        try {
+          const parsed = new URL(targetUrl);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return handleCors(request, Response.json({ ok: false, error: 'Only HTTP and HTTPS URLs are allowed.' }, { status: 400 }));
+          }
+
+          const hostname = parsed.hostname.toLowerCase();
+          if (
+            hostname === 'localhost' ||
+            hostname.endsWith('.localhost') ||
+            hostname.endsWith('.local') ||
+            hostname.endsWith('.internal') ||
+            hostname === '127.0.0.1' ||
+            hostname === '0.0.0.0' ||
+            hostname.startsWith('192.168.') ||
+            hostname.startsWith('10.')
+          ) {
+            return handleCors(request, Response.json({ ok: false, error: 'Requests to local or private networks are blocked.' }, { status: 400 }));
+          }
+
+          const fetchRes = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; ScienceOfGiftsStudio/1.0; +https://www.scienceofgifts.com)',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            },
+          });
+
+          if (!fetchRes.ok) {
+            return handleCors(request, Response.json({ ok: false, error: `Destination responded with status ${fetchRes.status}` }, { status: 400 }));
+          }
+
+          const text = await fetchRes.text();
+          const titleMatch = text.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i) || text.match(/<title[^>]*>([^<]+)<\/title>/i);
+          const descMatch = text.match(/<meta name=["']description["'] content=["']([^"']+)["']/i) || text.match(/<meta property=["']og:description["'] content=["']([^"']+)["']/i);
+          const canonicalMatch = text.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+
+          const title = (titleMatch ? titleMatch[1] : '').replace(/\s*(?:\||–|—|-)\s*(?:Science of Gifts).*$/i, '').trim();
+          const description = (descMatch ? descMatch[1] : '').trim();
+          const canonicalUrl = canonicalMatch ? canonicalMatch[1].trim() : undefined;
+
+          if (ai) {
+            try {
+              const textSnippet = text
+                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 5000);
+
+              const existingCategories = Array.isArray(body.existingCategories) ? body.existingCategories : [];
+
+              const prompt = `Analyze this article page for Science of Gifts Studio internal link metadata.
+
+URL: ${targetUrl}
+Extracted Title: ${title}
+Extracted Description: ${description}
+Text Excerpt: ${textSnippet}
+Existing Categories: ${JSON.stringify(existingCategories)}
+
+Return ONLY a valid JSON object:
+{
+  "title": "${title || ''}",
+  "category": "matched category or broad category",
+  "topic": "concise main subject and subtopics",
+  "description": "${description || ''}",
+  "preferredAnchor": "natural 2-5 word phrase for sentence hyperlinking",
+  "notes": "actionable notes explaining when linking genuinely helps the reader, relevant topics/claims, and when linking would be inappropriate"
+}`;
+
+              const res = await ai.models.generateContent({
+                model: 'gemini-3.6-flash',
+                contents: prompt,
+                config: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.3,
+                },
+              });
+
+              const respText = res.text?.trim() || '';
+              let parsed: any = null;
+              try { parsed = JSON.parse(respText); } catch {
+                const m = respText.match(/\{[\s\S]*\}/);
+                if (m) { try { parsed = JSON.parse(m[0]); } catch {} }
+              }
+
+              if (parsed && typeof parsed === 'object') {
+                return handleCors(request, Response.json({
+                  ok: true,
+                  metadata: {
+                    title: parsed.title || title || undefined,
+                    description: parsed.description || description || undefined,
+                    topic: parsed.topic || (title ? title.replace(/^(the|an?)\s+/i, '') : undefined),
+                    category: parsed.category || undefined,
+                    preferredAnchor: parsed.preferredAnchor || (title ? title.toLowerCase() : undefined),
+                    notes: parsed.notes || undefined,
+                    canonicalUrl,
+                  },
+                }));
+              }
+            } catch (aiErr: any) {
+              console.warn('Worker link AI analysis failed, falling back:', aiErr?.message);
+            }
+          }
+
+          return handleCors(request, Response.json({
+            ok: true,
+            metadata: {
+              title: title || undefined,
+              description: description || undefined,
+              canonicalUrl,
+              topic: title ? title.replace(/^(the|an?)\s+/i, '') : undefined,
+              preferredAnchor: title ? title.toLowerCase() : undefined,
+            },
+          }));
+        } catch (fetchErr: any) {
+          return handleCors(request, Response.json({ ok: false, error: fetchErr.message || 'Failed to fetch metadata' }, { status: 400 }));
+        }
+      }
+
+      // ==========================================
+      // ENDPOINT: POST /api/products/fetch-metadata
+      // ==========================================
+      if (url.pathname === '/api/products/fetch-metadata') {
+        const targetUrl = (body.url || '').trim();
+        if (!targetUrl) {
+          return handleCors(request, Response.json({ ok: false, error: 'Please provide a valid product URL.' }, { status: 400 }));
+        }
+
+        try {
+          const parsed = new URL(targetUrl);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return handleCors(request, Response.json({ ok: false, error: 'Only HTTP and HTTPS URLs are allowed.' }, { status: 400 }));
+          }
+
+          const hostname = parsed.hostname.toLowerCase();
+          if (
+            hostname === 'localhost' ||
+            hostname.endsWith('.localhost') ||
+            hostname.endsWith('.local') ||
+            hostname.endsWith('.internal') ||
+            hostname === '127.0.0.1' ||
+            hostname === '0.0.0.0' ||
+            hostname.startsWith('192.168.') ||
+            hostname.startsWith('10.')
+          ) {
+            return handleCors(request, Response.json({ ok: false, error: 'Requests to local or private networks are blocked.' }, { status: 400 }));
+          }
+
+          const fetchRes = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; ScienceOfGiftsStudio/1.0; +https://www.scienceofgifts.com)',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            },
+          });
+
+          if (!fetchRes.ok) {
+            return handleCors(request, Response.json({ ok: false, error: `Destination responded with status ${fetchRes.status}` }, { status: 400 }));
+          }
+
+          const text = await fetchRes.text();
+          
+          // JSON-LD extraction
+          let jsonLd: any = null;
+          const jsonLdMatch = text.match(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+          if (jsonLdMatch && jsonLdMatch[1]) {
+            try {
+              const p = JSON.parse(jsonLdMatch[1]);
+              jsonLd = Array.isArray(p) ? p[0] : (p['@graph'] ? p['@graph'][0] : p);
+            } catch {}
+          }
+
+          const titleMatch = text.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i) || text.match(/<title[^>]*>([^<]+)<\/title>/i);
+          const descMatch = text.match(/<meta name=["']description["'] content=["']([^"']+)["']/i) || text.match(/<meta property=["']og:description["'] content=["']([^"']+)["']/i);
+          const canonicalMatch = text.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+
+          const rawTitle = jsonLd?.name || (titleMatch ? titleMatch[1] : '');
+          const productName = rawTitle.replace(/\s*(?:\||–|—|-)\s*(?:Science of Gifts|Official Store|Shop).*$/i, '').trim();
+          const summary = (jsonLd?.description || (descMatch ? descMatch[1] : '')).replace(/<[^>]+>/g, '').trim();
+          const canonicalUrl = canonicalMatch ? canonicalMatch[1].trim() : undefined;
+
+          let productType = jsonLd?.category || '';
+          if (!productType && productName) {
+            const nameLower = (productName + ' ' + text.slice(0, 1000)).toLowerCase();
+            if (/compass|sextant/i.test(nameLower)) productType = 'Navigational Instrument';
+            else if (/watch|chronometer/i.test(nameLower)) productType = 'Timepiece';
+            else if (/pen|journal|desk/i.test(nameLower)) productType = 'Desk Accessory';
+            else if (/knife|tool/i.test(nameLower)) productType = 'Pocket Tool';
+          }
+
+          const topic = body.guideTopic || 'curated gifts';
+          const audience = body.guideAudience || 'discerning gifters';
+
+          return handleCors(request, Response.json({
+            ok: true,
+            metadata: {
+              name: productName || undefined,
+              productType: productType || undefined,
+              summary: summary ? summary.slice(0, 240) : undefined,
+              materialDetails: jsonLd?.material ? `Materials: ${jsonLd.material}` : undefined,
+              whyItFits: productName ? `Provides authentic material heft and functional connection for ${topic}.` : undefined,
+              bestFor: productName ? `Ideal for ${audience} who appreciate enduring craft and heirloom utility.` : undefined,
+              canonicalUrl,
+            },
+          }));
+        } catch (fetchErr: any) {
+          return handleCors(request, Response.json({ ok: false, error: fetchErr.message || 'Failed to fetch product details' }, { status: 400 }));
+        }
+      }
+
+      // ==========================================
+      // ENDPOINT: POST /api/products/analyze-research
+      // ==========================================
+      if (url.pathname === '/api/products/analyze-research') {
+        const targetUrl = (body.url || '').trim();
+        if (!targetUrl) {
+          return handleCors(request, Response.json({ ok: false, error: 'Please provide a valid product URL.' }, { status: 400 }));
+        }
+
+        try {
+          const parsed = new URL(targetUrl);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return handleCors(request, Response.json({ ok: false, error: 'Only HTTP and HTTPS URLs are allowed.' }, { status: 400 }));
+          }
+
+          const hostname = parsed.hostname.toLowerCase();
+          if (
+            hostname === 'localhost' ||
+            hostname.endsWith('.localhost') ||
+            hostname.endsWith('.local') ||
+            hostname.endsWith('.internal') ||
+            hostname === '127.0.0.1' ||
+            hostname === '0.0.0.0' ||
+            hostname.startsWith('192.168.') ||
+            hostname.startsWith('10.')
+          ) {
+            return handleCors(request, Response.json({ ok: false, error: 'Requests to local or private networks are blocked.' }, { status: 400 }));
+          }
+
+          const fetchRes = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; ScienceOfGiftsStudio/1.0; +https://www.scienceofgifts.com)',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            },
+          });
+
+          if (!fetchRes.ok) {
+            return handleCors(request, Response.json({ ok: false, error: `Destination responded with status ${fetchRes.status}` }, { status: 400 }));
+          }
+
+          const text = await fetchRes.text();
+          let jsonLd: any = null;
+          const jsonLdMatch = text.match(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+          if (jsonLdMatch && jsonLdMatch[1]) {
+            try {
+              const p = JSON.parse(jsonLdMatch[1]);
+              jsonLd = Array.isArray(p) ? p[0] : (p['@graph'] ? p['@graph'][0] : p);
+            } catch {}
+          }
+
+          const titleMatch = text.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i) || text.match(/<title[^>]*>([^<]+)<\/title>/i);
+          const descMatch = text.match(/<meta name=["']description["'] content=["']([^"']+)["']/i) || text.match(/<meta property=["']og:description["'] content=["']([^"']+)["']/i);
+          const imgMatch = text.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i) || text.match(/<meta name=["']twitter:image["'] content=["']([^"']+)["']/i);
+          const canonicalMatch = text.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["'][^>]*>/i);
+
+          const rawTitle = jsonLd?.name || (titleMatch ? titleMatch[1] : '');
+          const productName = rawTitle.replace(/\s*(?:\||–|—|-)\s*(?:Science of Gifts|Official Store|Shop).*$/i, '').trim();
+          const summary = (jsonLd?.description || (descMatch ? descMatch[1] : '')).replace(/<[^>]+>/g, '').trim();
+          const imageUrl = jsonLd?.image || (imgMatch ? imgMatch[1] : '');
+          const canonicalUrl = canonicalMatch ? canonicalMatch[1].trim() : undefined;
+
+          let productType = jsonLd?.category || '';
+          if (!productType && productName) {
+            const nameLower = (productName + ' ' + text.slice(0, 1000)).toLowerCase();
+            if (/compass|sextant/i.test(nameLower)) productType = 'Navigational Instrument';
+            else if (/watch|chronometer/i.test(nameLower)) productType = 'Timepiece';
+            else if (/pen|journal|desk/i.test(nameLower)) productType = 'Desk Accessory';
+            else if (/knife|tool/i.test(nameLower)) productType = 'Pocket Tool';
+          }
+
+          const modelToUse = resolveServerModel(body.model || body.modelOverride, 'gemini-3.6-flash');
+
+          if (ai) {
+            try {
+              const textSnippet = text
+                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 5000);
+
+              const gCtx = typeof body.guideContext === 'object' && body.guideContext !== null ? body.guideContext : {};
+              const hasGuideCtx = Boolean(gCtx.title || gCtx.primaryTopic || gCtx.audience);
+              const guideContextBlock = hasGuideCtx
+                ? `\nGUIDE CONTEXT:\n- Title: ${gCtx.title || 'N/A'}\n- Primary Topic: ${gCtx.primaryTopic || 'N/A'}\n- Audience/Recipient: ${gCtx.audience || 'N/A'}\n`
+                : '';
+
+              const prompt = `Analyze this product page source for Science of Gifts Studio.
+
+URL: ${targetUrl}
+Product Title: ${productName}
+JSON-LD Data: ${JSON.stringify(jsonLd || {})}
+Text Excerpt: ${textSnippet}
+${guideContextBlock}
+
+Return ONLY a valid JSON object:
+{
+  "productName": "${productName || ''}",
+  "productType": "${productType || ''}",
+  "productUrl": "${targetUrl}",
+  "imageUrl": "${imageUrl || ''}",
+  "materials": "materials and metals found on page",
+  "features": "key physical features and mechanics",
+  "dimensions": "dimensions, weight, gauge",
+  "colors": "colors and finishes",
+  "designConcept": "visual language and aesthetic proportions based on evidence",
+  "historicalContext": "documented tool heritage or origin if mentioned, else empty string",
+  "whyItFits": "${hasGuideCtx ? 'explain why this product specifically serves this gift guide' : 'why it is a notable product'}",
+  "bestFor": "suitable recipient or specific use case",
+  "buyerConsiderations": "useful care, dimensions, display or maintenance advice",
+  "intendedRecipient": "suitable recipient profiles",
+  "targetAudience": "discerning audience profile",
+  "additionalFacts": "verifiable care/maintenance notes",
+  "rawProductInfo": "${summary || ''}"
+}`;
+
+              const response = await ai.models.generateContent({
+                model: modelToUse,
+                contents: prompt,
+                config: {
+                  responseMimeType: 'application/json',
+                  temperature: 0.3,
+                },
+              });
+
+              const respText = response.text?.trim() || '';
+              let parsed: any = null;
+              try { parsed = JSON.parse(respText); } catch {
+                const m = respText.match(/\{[\s\S]*\}/);
+                if (m) { try { parsed = JSON.parse(m[0]); } catch {} }
+              }
+
+              if (parsed && typeof parsed === 'object') {
+                return handleCors(request, Response.json({
+                  ok: true,
+                  metadata: {
+                    productName: parsed.productName || productName || '',
+                    productType: parsed.productType || productType || '',
+                    productUrl: targetUrl,
+                    imageUrl: parsed.imageUrl || imageUrl || '',
+                    materials: parsed.materials || (jsonLd?.material ? `Materials: ${jsonLd.material}` : ''),
+                    features: parsed.features || '',
+                    dimensions: parsed.dimensions || '',
+                    colors: parsed.colors || '',
+                    designConcept: parsed.designConcept || '',
+                    historicalContext: parsed.historicalContext || '',
+                    whyItFits: parsed.whyItFits || '',
+                    bestFor: parsed.bestFor || parsed.intendedRecipient || '',
+                    buyerConsiderations: parsed.buyerConsiderations || parsed.additionalFacts || '',
+                    intendedRecipient: parsed.intendedRecipient || '',
+                    targetAudience: parsed.targetAudience || '',
+                    additionalFacts: parsed.additionalFacts || '',
+                    rawProductInfo: parsed.rawProductInfo || summary || '',
+                    canonicalUrl,
+                  },
+                  modelUsed: modelToUse,
+                }));
+              }
+            } catch (aiErr: any) {
+              console.warn('Worker AI analysis failed, falling back:', aiErr?.message);
+            }
+          }
+
+          // Fallback response
+          return handleCors(request, Response.json({
+            ok: true,
+            metadata: {
+              productName: productName || '',
+              productType: productType || '',
+              productUrl: targetUrl,
+              imageUrl: imageUrl || '',
+              materials: jsonLd?.material ? `Materials: ${jsonLd.material}` : '',
+              features: '',
+              dimensions: '',
+              colors: '',
+              designConcept: '',
+              historicalContext: '',
+              intendedRecipient: '',
+              targetAudience: '',
+              additionalFacts: '',
+              rawProductInfo: summary || '',
+              canonicalUrl,
+            },
+            modelUsed: 'worker-deterministic-fallback',
+          }));
+        } catch (fetchErr: any) {
+          return handleCors(request, Response.json({ ok: false, error: fetchErr.message || 'Failed to analyze product' }, { status: 400 }));
+        }
       }
 
       // If no route matched

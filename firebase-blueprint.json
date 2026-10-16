@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "WritingProject": {
+      "title": "Writing Project",
+      "description": "A writing project record (article, gift guide, or product copy)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["article", "gift_guide", "product_copy"] },
+        "title": { "type": "string", "maxLength": 500 },
+        "content": { "type": "string", "maxLength": 1000000 },
+        "status": { "type": "string", "enum": ["idea", "in_progress", "review_ready", "completed", "archived"] },
+        "createdAt": { "type": "string", "maxLength": 100 },
+        "updatedAt": { "type": "string", "maxLength": 100 },
+        "_isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "type", "title", "updatedAt"]
+    },
+    "StyleProfile": {
+      "title": "Style Profile",
+      "description": "User custom writing style profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 250 },
+        "createdAt": { "type": "string", "maxLength": 100 },
+        "updatedAt": { "type": "string", "maxLength": 100 },
+        "_isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "name", "updatedAt"]
+    },
+    "InternalLink": {
+      "title": "Internal Link",
+      "description": "User internal link publication record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 500 },
+        "url": { "type": "string", "maxLength": 2000 },
+        "topic": { "type": "string", "maxLength": 500 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "maxLength": 200 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 100 },
+        "updatedAt": { "type": "string", "maxLength": 100 },
+        "_isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "title", "url", "updatedAt"]
+    },
+    "ResearchStudy": {
+      "title": "Research Study",
+      "description": "User research study reference",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 100 },
+        "updatedAt": { "type": "string", "maxLength": 100 },
+        "_isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "title", "updatedAt"]
+    },
+    "ResearchClaim": {
+      "title": "Research Claim",
+      "description": "User research claim item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studyId": { "type": "string", "maxLength": 128 },
+        "claimText": { "type": "string", "maxLength": 5000 },
+        "updatedAt": { "type": "string", "maxLength": 100 },
+        "_isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "claimText", "updatedAt"]
+    },
+    "SavedEditorialIdea": {
+      "title": "Saved Editorial Idea",
+      "description": "User saved editorial idea",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 500 },
+        "updatedAt": { "type": "string", "maxLength": 100 },
+        "_isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "title", "updatedAt"]
+    },
+    "GlobalInstruction": {
+      "title": "Global Instruction",
+      "description": "User global instruction rule",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "text": { "type": "string", "maxLength": 1000 },
+        "enabled": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 100 },
+        "_isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "text"]
+    },
+    "UserSettings": {
+      "title": "User Settings",
+      "description": "User application settings",
+      "type": "object",
+      "properties": {
+        "activeProjectId": { "type": "string", "maxLength": 128 },
+        "activeTheme": { "type": "string", "maxLength": 100 },
+        "globalAiModel": { "type": "string", "maxLength": 100 },
+        "updatedAt": { "type": "string", "maxLength": 100 }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}/projects/{projectId}": {
+      "schema": "WritingProject",
+      "description": "User writing projects"
+    },
+    "/users/{userId}/style_profiles/{profileId}": {
+      "schema": "StyleProfile",
+      "description": "User style profiles"
+    },
+    "/users/{userId}/internal_links/{linkId}": {
+      "schema": "InternalLink",
+      "description": "User internal links library"
+    },
+    "/users/{userId}/research_studies/{studyId}": {
+      "schema": "ResearchStudy",
+      "description": "User research studies"
+    },
+    "/users/{userId}/research_claims/{claimId}": {
+      "schema": "ResearchClaim",
+      "description": "User research claims"
+    },
+    "/users/{userId}/saved_ideas/{ideaId}": {
+      "schema": "SavedEditorialIdea",
+      "description": "User saved editorial ideas"
+    },
+    "/users/{userId}/global_instructions/{instructionId}": {
+      "schema": "GlobalInstruction",
+      "description": "User global instructions"
+    },
+    "/users/{userId}/settings/user_settings": {
+      "schema": "UserSettings",
+      "description": "User application settings"
+    }
+  }
+}

@@ -624,6 +624,18 @@ export const storage = {
     this.notifyListeners();
   },
 
+  saveProjectsFromRemote(projects: WritingProject[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+    } catch (e) {
+      console.error('Failed to save remote projects to localStorage:', e);
+    }
+    indexedDBService.putMany(STORES.PROJECTS, projects).catch((err) => {
+      console.warn('Async IndexedDB saveProjectsFromRemote error:', err);
+    });
+    this.notifyListeners();
+  },
+
   getProjectById(id: string): WritingProject | undefined {
     const list = this.getProjects();
     return list.find((p) => p.id === id);
@@ -870,6 +882,30 @@ export const storage = {
     this.notifyListeners();
   },
 
+  saveGlobalInstructionsFromRemote(rules: GlobalInstruction[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_GLOBAL_RULES, JSON.stringify(rules));
+    } catch (e) {
+      console.error('Failed to save remote global rules:', e);
+    }
+    indexedDBService.putMany(STORES.GLOBAL_INSTRUCTIONS, rules).catch((err) => {
+      console.warn('Async IndexedDB saveGlobalInstructionsFromRemote error:', err);
+    });
+    this.notifyListeners();
+  },
+
+  saveSettingsFromRemote(settings: { activeProjectId?: string; activeTheme?: any; globalAiModel?: any }): void {
+    if (settings.activeProjectId !== undefined) {
+      this.setActiveProjectId(settings.activeProjectId);
+    }
+    if (settings.activeTheme) {
+      this.setTheme(settings.activeTheme);
+    }
+    if (settings.globalAiModel) {
+      this.setGlobalModel(settings.globalAiModel);
+    }
+  },
+
   resetGlobalInstructions(): GlobalInstruction[] {
     this.saveGlobalInstructions(DEFAULT_GLOBAL_INSTRUCTIONS);
     return DEFAULT_GLOBAL_INSTRUCTIONS;
@@ -958,6 +994,18 @@ export const storage = {
     this.notifyListeners();
   },
 
+  saveStyleProfilesFromRemote(profiles: StyleProfile[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_STYLE_PROFILES, JSON.stringify(profiles));
+    } catch (e) {
+      console.error('Failed to save remote style profiles:', e);
+    }
+    indexedDBService.putMany(STORES.STYLE_PROFILES, profiles).catch((err) => {
+      console.warn('Async IndexedDB saveStyleProfilesFromRemote error:', err);
+    });
+    this.notifyListeners();
+  },
+
   deleteStyleProfile(id: string): void {
     const list = this.getStyleProfiles();
     const filtered = list.filter((p) => p.id !== id);
@@ -1019,6 +1067,18 @@ export const storage = {
     }
     indexedDBService.putMany(STORES.INTERNAL_LINKS, links).catch((err) => {
       console.warn('Async IndexedDB saveInternalLinks error:', err);
+    });
+    this.notifyListeners();
+  },
+
+  saveInternalLinksFromRemote(links: InternalLink[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_INTERNAL_LINKS, JSON.stringify(links));
+    } catch (e) {
+      console.error('Failed to save remote internal links:', e);
+    }
+    indexedDBService.putMany(STORES.INTERNAL_LINKS, links).catch((err) => {
+      console.warn('Async IndexedDB saveInternalLinksFromRemote error:', err);
     });
     this.notifyListeners();
   },
@@ -1096,6 +1156,18 @@ export const storage = {
     }
     indexedDBService.putMany(STORES.SAVED_IDEAS, ideas).catch((err) => {
       console.warn('Async IndexedDB saveSavedIdeas error:', err);
+    });
+    this.notifyListeners();
+  },
+
+  saveSavedIdeasFromRemote(ideas: SavedEditorialIdea[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_SAVED_IDEAS, JSON.stringify(ideas));
+    } catch (e) {
+      console.error('Failed to save remote ideas to localStorage:', e);
+    }
+    indexedDBService.putMany(STORES.SAVED_IDEAS, ideas).catch((err) => {
+      console.warn('Async IndexedDB saveSavedIdeasFromRemote error:', err);
     });
     this.notifyListeners();
   },
@@ -1205,6 +1277,18 @@ export const storage = {
     this.notifyListeners();
   },
 
+  saveResearchStudiesFromRemote(studies: ResearchStudy[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_RESEARCH_STUDIES, JSON.stringify(studies));
+    } catch (e) {
+      console.error('Failed to save remote research studies to localStorage:', e);
+    }
+    indexedDBService.putMany(STORES.RESEARCH_STUDIES, studies).catch((err) => {
+      console.warn('Async IndexedDB saveResearchStudiesFromRemote error:', err);
+    });
+    this.notifyListeners();
+  },
+
   saveResearchStudy(study: ResearchStudy): void {
     const list = this.getResearchStudies();
     const existingIndex = list.findIndex((s) => s.id === study.id);
@@ -1255,6 +1339,18 @@ export const storage = {
     }
     indexedDBService.putMany(STORES.RESEARCH_CLAIMS, claims).catch((err) => {
       console.warn('Async IndexedDB saveResearchClaims error:', err);
+    });
+    this.notifyListeners();
+  },
+
+  saveResearchClaimsFromRemote(claims: ResearchClaim[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_RESEARCH_CLAIMS, JSON.stringify(claims));
+    } catch (e) {
+      console.error('Failed to save remote research claims to localStorage:', e);
+    }
+    indexedDBService.putMany(STORES.RESEARCH_CLAIMS, claims).catch((err) => {
+      console.warn('Async IndexedDB saveResearchClaimsFromRemote error:', err);
     });
     this.notifyListeners();
   },

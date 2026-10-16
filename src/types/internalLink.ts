@@ -42,6 +42,7 @@ export interface FindLinkOpportunitiesRequest {
     topic: string;
     description: string;
     preferredAnchor?: string;
+    notes?: string;
     category: string;
   }[];
   alreadyUsedUrls: string[];
@@ -51,5 +52,27 @@ export interface FindLinkOpportunitiesResponse {
   ok: boolean;
   opportunities: LinkOpportunity[];
   rationale?: string;
+  error?: string;
+}
+
+export interface FetchedLinkMetadata {
+  title?: string;
+  description?: string;
+  topic?: string;
+  category?: string;
+  preferredAnchor?: string;
+  notes?: string;
+  canonicalUrl?: string;
+  resolvedUrl?: string;
+}
+
+export interface FetchLinkMetadataRequest {
+  url: string;
+  existingCategories?: string[];
+}
+
+export interface FetchLinkMetadataResponse {
+  ok: boolean;
+  metadata?: FetchedLinkMetadata;
   error?: string;
 }

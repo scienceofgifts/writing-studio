@@ -22,6 +22,36 @@ export interface GiftProduct {
   rawInfo?: string;
 }
 
+export interface FetchedProductMetadata {
+  name?: string;
+  productType?: string;
+  url?: string;
+  canonicalUrl?: string;
+  summary?: string;
+  materialDetails?: string;
+  historicalContext?: string;
+  designDetails?: string;
+  whyItFits?: string;
+  bestFor?: string;
+  buyerConsiderations?: string;
+  productInstructions?: string;
+  rawInfo?: string;
+  imageUrl?: string;
+  resolvedUrl?: string;
+}
+
+export interface FetchProductMetadataRequest {
+  url: string;
+  guideTopic?: string;
+  guideAudience?: string;
+}
+
+export interface FetchProductMetadataResponse {
+  ok: boolean;
+  metadata?: FetchedProductMetadata;
+  error?: string;
+}
+
 export interface GuideFAQItem {
   id: string;
   question: string;

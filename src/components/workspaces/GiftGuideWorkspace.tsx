@@ -583,7 +583,7 @@ export const GiftGuideWorkspace: React.FC<GiftGuideWorkspaceProps> = ({
         {activeTab === 'canvas' && (
           <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
             {/* Left Products Sidebar (Structured Inventory) */}
-            <div className="w-full md:w-80 lg:w-96 max-h-56 md:max-h-none border-b md:border-b-0 md:border-r border-[#e5dfd3] bg-[#fcfbfa] flex flex-col shrink-0 overflow-hidden">
+            <div className="w-full md:w-80 lg:w-96 max-h-72 md:max-h-none border-b md:border-b-0 md:border-r border-[#e5dfd3] bg-[#fcfbfa] flex flex-col shrink-0 overflow-hidden">
               {/* Products Header */}
               <div className="p-3.5 border-b border-[#e5dfd3] bg-[#f5f2ea] flex items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-1.5">
@@ -597,7 +597,7 @@ export const GiftGuideWorkspace: React.FC<GiftGuideWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={handleAddProduct}
-                    className="px-2 py-1 text-xs font-semibold text-white bg-[#1e232a] hover:bg-[#2d3440] rounded-md transition-colors inline-flex items-center gap-1 shadow-2xs"
+                    className="px-2 py-1 text-xs font-semibold text-white bg-[#1e232a] hover:bg-[#2d3440] rounded-md transition-colors inline-flex items-center gap-1 shadow-2xs cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
                     <span>Add Item</span>
@@ -685,6 +685,14 @@ export const GiftGuideWorkspace: React.FC<GiftGuideWorkspaceProps> = ({
                         onExecuteProductAiAction={handleExecuteProductAiAction}
                         onInsertIntoDraft={handleInsertProductIntoDraft}
                         isDuplicateUrl={isDup}
+                        guideContext={{
+                          title: project.title,
+                          subtitle: meta.standfirst,
+                          primaryTopic: meta.primaryTopic || project.title,
+                          audience: meta.audience,
+                          occasionOrNiche: meta.occasionOrNiche,
+                          editorialBrief: meta.additionalInstructions,
+                        }}
                       />
                     );
                   })
@@ -785,6 +793,14 @@ export const GiftGuideWorkspace: React.FC<GiftGuideWorkspaceProps> = ({
                     onExecuteProductAiAction={handleExecuteProductAiAction}
                     onInsertIntoDraft={handleInsertProductIntoDraft}
                     isDuplicateUrl={isDup}
+                    guideContext={{
+                      title: project.title,
+                      subtitle: meta.standfirst,
+                      primaryTopic: meta.primaryTopic || project.title,
+                      audience: meta.audience,
+                      occasionOrNiche: meta.occasionOrNiche,
+                      editorialBrief: meta.additionalInstructions,
+                    }}
                   />
                 );
               })}

@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { getModelDefinition } from '../services/modelRegistry';
 import { storage } from '../services/storage';
+import { CloudSyncBar } from './CloudSyncBar';
 
 interface NavigationProps {
   currentView: 'dashboard' | 'workspace' | 'settings' | 'style_reference' | 'internal_links' | 'idea_generator' | 'backup' | 'research';
@@ -371,8 +372,9 @@ export const Navigation: React.FC<NavigationProps> = ({
           </nav>
         </div>
 
-        {/* Right: New Draft Creation & Mobile Menu Button */}
-        <div className="flex items-center gap-3">
+        {/* Right: Cloud Sync, New Draft Creation & Mobile Menu Button */}
+        <div className="flex items-center gap-2.5">
+          <CloudSyncBar />
           {/* Quick Create Dropdown */}
           <div className="relative" ref={newMenuRef}>
             <button

@@ -11,6 +11,7 @@ import { GoogleGenAI } from '@google/genai';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
+import { fetchUrlMetadata, fetchProductUrlMetadata, fetchHtmlWithSecurity, extractProductMetadataFromHtml } from './src/server/urlMetadata';
 
 dotenv.config();
 
@@ -1170,6 +1171,7 @@ MANDATORY EDITORIAL LINKING RULES:
 4. DUPLICATE PROTECTION: Do NOT recommend any URL that is listed in ALREADY USED URLS. A single article should normally appear at most once in a document.
 5. EXACT TARGET PASSAGE: "targetPassage" must be a real sentence or clause copied verbatim from the document so the editor can locate it. "suggestedAnchor" must be a substring of "targetPassage".
 6. RESTRAINT: Favor quality over quantity. If no genuine opportunities exist, return an empty array.
+7. EDITORIAL NOTES CONTEXT: Strictly adhere to the Editorial Notes provided for each library article. Recommend a link ONLY when the discussion matches the specific contextual relationship and relevance criteria described in the notes. Do NOT link when the notes indicate the link would be inappropriate, superficial, or redundant.
 
 Return ONLY valid JSON matching this schema:
 {
@@ -1200,7 +1202,8 @@ ${availableLinks
    - URL: ${l.url}
    - Topic: ${l.topic}
    - Description: ${l.description}
-   ${l.preferredAnchor ? `- Preferred Anchor: "${l.preferredAnchor}"` : ''}`
+   ${l.preferredAnchor ? `- Preferred Anchor: "${l.preferredAnchor}"` : ''}
+   ${l.notes ? `- Editorial Notes: "${l.notes}"` : ''}`
   )
   .join('\n\n')}
 
@@ -3100,6 +3103,207 @@ OUTPUT SCHEMA (STRICTLY VALID JSON):
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to create editorial brief' });
+  }
+});
+
+// Automatic internal link metadata fetcher & AI research analyzer
+app.post('/api/links/fetch-metadata', async (req, res) => {
+  try {
+    const { url, existingCategories } = req.body;
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      return res.status(400).json({ ok: false, error: 'Please provide a valid destination URL.' });
+    }
+
+    const categories = Array.isArray(existingCategories) ? existingCategories : [];
+    const metadata = await fetchUrlMetadata(url.trim(), categories, apiKey);
+    return res.json({ ok: true, metadata });
+  } catch (err: any) {
+    console.warn('Metadata fetch error for link:', err?.message);
+    return res.status(400).json({
+      ok: false,
+      error: err?.message || 'Failed to fetch article details. Please verify the URL and try again.',
+    });
+  }
+});
+
+// Automatic product details metadata fetcher
+app.post('/api/products/fetch-metadata', async (req, res) => {
+  try {
+    const { url, guideTopic, guideAudience } = req.body;
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      return res.status(400).json({ ok: false, error: 'Please provide a valid product URL.' });
+    }
+
+    const metadata = await fetchProductUrlMetadata(url.trim(), {
+      topic: typeof guideTopic === 'string' ? guideTopic : '',
+      audience: typeof guideAudience === 'string' ? guideAudience : '',
+    });
+
+    return res.json({ ok: true, metadata });
+  } catch (err: any) {
+    console.warn('Product metadata fetch error:', err?.message);
+    return res.status(400).json({
+      ok: false,
+      error: err?.message || 'Failed to fetch product details. Please verify the URL and try again.',
+    });
+  }
+});
+
+// Intelligent AI product research analysis endpoint
+app.post('/api/products/analyze-research', async (req, res) => {
+  try {
+    const { url, modelOverride, guideContext } = req.body;
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      return res.status(400).json({ ok: false, error: 'Please provide a valid product URL to analyze.' });
+    }
+
+    const targetUrl = url.trim();
+    const { html, finalUrl } = await fetchHtmlWithSecurity(targetUrl);
+    const extracted = extractProductMetadataFromHtml(html, finalUrl);
+
+    if (apiKey) {
+      try {
+        const genAI = new GoogleGenAI({ apiKey });
+        const modelToUse = modelOverride || 'gemini-3.6-flash';
+
+        const textSnippet = html
+          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+          .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 6000);
+
+        const gCtx = typeof guideContext === 'object' && guideContext !== null ? guideContext : {};
+        const hasGuideCtx = Boolean(gCtx.title || gCtx.primaryTopic || gCtx.audience);
+        const guideContextBlock = hasGuideCtx
+          ? `\nGUIDE CONTEXT (Tailor editorial analysis specifically to this gift guide):\n- Guide Title: ${gCtx.title || 'N/A'}\n- Subtitle/Standfirst: ${gCtx.subtitle || 'N/A'}\n- Primary Topic/Niche: ${gCtx.primaryTopic || 'N/A'}\n- Target Recipient/Audience: ${gCtx.audience || 'N/A'}\n- Occasion/Niche: ${gCtx.occasionOrNiche || 'N/A'}\n- Editorial Instructions: ${gCtx.editorialBrief || 'N/A'}\n`
+          : '';
+
+        const prompt = `You are a senior product researcher and editorial analyst for Science of Gifts Studio.
+Analyze the following retrieved product page content and structured product metadata.
+
+Source URL: ${finalUrl}
+Extracted Base Details: ${JSON.stringify(extracted)}
+Page Content Excerpt: ${textSnippet}
+${guideContextBlock}
+
+Extract and synthesize facts and AI editorial research into structured fields for the product entry.
+
+STRICT EDITORIAL & FACTUAL RULES:
+1. VERIFIED SOURCE FACTS (productName, productType, materials, features, dimensions, colors, imageUrl): Must be grounded strictly in the source page. Do NOT invent missing specifications, dimensions, materials, or manufacturing locations. Leave empty "" if not supported by the page.
+2. GUIDE-SPECIFIC EDITORIAL REASONING:
+   - whyItFits: ${hasGuideCtx ? "MUST BE SPECIFIC TO THIS GIFT GUIDE! Explain why this product's documented characteristics, style, materials, or function align with the guide's theme, recipient, or occasion. Do NOT provide generic praise like 'It makes a great gift'." : "Explain why this product is distinctive and worth recommending."}
+   - bestFor: Identify a plausible recipient or use case grounded in actual product features and target audience.
+   - buyerConsiderations: Provide genuinely useful, factual guidance (dimensions, display needs, care/maintenance, compatibility, size/weight, or limitations).
+   - designConcept: Explain the visual language, visual proportions, material character, and aesthetic choices supported by evidence.
+   - historicalContext: Identify documented historical or cultural connections ONLY when supported by source material. Do not fabricate historical heritage.
+3. Preserve clean specification notes in rawProductInfo / summary.
+
+Return ONLY a valid JSON object with keys:
+{
+  "productName": "string",
+  "productType": "string",
+  "productUrl": "${finalUrl}",
+  "imageUrl": "string (valid image URL if found in source)",
+  "materials": "string",
+  "features": "string",
+  "dimensions": "string",
+  "colors": "string",
+  "designConcept": "string",
+  "historicalContext": "string",
+  "whyItFits": "string",
+  "bestFor": "string",
+  "buyerConsiderations": "string",
+  "intendedRecipient": "string",
+  "targetAudience": "string",
+  "additionalFacts": "string",
+  "rawProductInfo": "string",
+  "canonicalUrl": "string"
+}`;
+
+        const geminiRes = await genAI.models.generateContent({
+          model: modelToUse,
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.3,
+          },
+        });
+
+        const respText = geminiRes.text?.trim() || '';
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(respText);
+        } catch {
+          const m = respText.match(/\{[\s\S]*\}/);
+          if (m) {
+            try { parsed = JSON.parse(m[0]); } catch {}
+          }
+        }
+
+        if (parsed && typeof parsed === 'object') {
+          return res.json({
+            ok: true,
+            metadata: {
+              productName: parsed.productName || extracted.name || '',
+              productType: parsed.productType || extracted.productType || '',
+              productUrl: finalUrl,
+              imageUrl: parsed.imageUrl || extracted.imageUrl || '',
+              materials: parsed.materials || extracted.materialDetails || '',
+              features: parsed.features || '',
+              dimensions: parsed.dimensions || '',
+              colors: parsed.colors || '',
+              designConcept: parsed.designConcept || extracted.designDetails || '',
+              historicalContext: parsed.historicalContext || extracted.historicalContext || '',
+              whyItFits: parsed.whyItFits || extracted.whyItFits || '',
+              bestFor: parsed.bestFor || parsed.intendedRecipient || extracted.bestFor || '',
+              buyerConsiderations: parsed.buyerConsiderations || parsed.additionalFacts || extracted.buyerConsiderations || '',
+              intendedRecipient: parsed.intendedRecipient || parsed.bestFor || '',
+              targetAudience: parsed.targetAudience || parsed.whyItFits || '',
+              additionalFacts: parsed.additionalFacts || parsed.buyerConsiderations || '',
+              rawProductInfo: parsed.rawProductInfo || extracted.summary || '',
+              canonicalUrl: parsed.canonicalUrl || extracted.canonicalUrl || finalUrl,
+            },
+            modelUsed: modelToUse,
+          });
+        }
+      } catch (geminiErr: any) {
+        console.warn('Gemini product research error, falling back:', geminiErr?.message);
+      }
+    }
+
+    // Fallback: deterministic extraction
+    return res.json({
+      ok: true,
+      metadata: {
+        productName: extracted.name || '',
+        productType: extracted.productType || '',
+        productUrl: finalUrl,
+        imageUrl: extracted.imageUrl || '',
+        materials: extracted.materialDetails || '',
+        features: '',
+        dimensions: '',
+        colors: '',
+        designConcept: extracted.designDetails || '',
+        historicalContext: extracted.historicalContext || '',
+        whyItFits: extracted.whyItFits || '',
+        bestFor: extracted.bestFor || '',
+        buyerConsiderations: extracted.buyerConsiderations || '',
+        intendedRecipient: extracted.bestFor || '',
+        targetAudience: extracted.whyItFits || '',
+        additionalFacts: extracted.buyerConsiderations || '',
+        rawProductInfo: extracted.summary || '',
+        canonicalUrl: extracted.canonicalUrl || finalUrl,
+      },
+      modelUsed: 'deterministic-extractor',
+    });
+  } catch (err: any) {
+    console.warn('Product research error:', err?.message);
+    return res.status(400).json({
+      ok: false,
+      error: err?.message || 'Failed to analyze product page. Please check the URL and try again.',
+    });
   }
 });
 
