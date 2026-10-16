@@ -72,9 +72,8 @@ export const InternalLinksView: React.FC<InternalLinksViewProps> = ({ onBackToSt
 
   const confirmDeleteLink = () => {
     if (!linkToDelete) return;
-    const updated = links.filter((l) => l.id !== linkToDelete.id);
-    setLinks(updated);
-    storage.saveInternalLinks(updated);
+    storage.deleteInternalLink(linkToDelete.id);
+    setLinks(storage.getInternalLinks());
     toast.info('Link Removed', `"${linkToDelete.title}" was deleted.`);
     setLinkToDelete(null);
   };

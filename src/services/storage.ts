@@ -29,6 +29,7 @@ import { DEFAULT_GLOBAL_MODEL_ID, MODEL_REGISTRY } from './modelRegistry';
 import { SavedEditorialIdea } from '../types/ideaGenerator';
 import { ResearchStudy, ResearchClaim, ResearchFile } from '../types/research';
 import { indexedDBService, STORES } from './indexedDB';
+import { syncEngine } from './syncEngine';
 
 const STORAGE_KEY_PROJECTS = 'sog_writing_projects_v2';
 const STORAGE_KEY_GLOBAL_RULES = 'sog_global_instructions_v2';
@@ -45,6 +46,44 @@ const STORAGE_KEY_RESEARCH_FILES = 'sog_research_files_v1';
 const STORAGE_KEY_LAST_BACKUP = 'sog_last_backup_timestamp_v1';
 
 const storageListeners = new Set<() => void>();
+
+function mergeWithTombstones<T extends { id: string; updatedAt?: string; deletedAt?: string; _isDeleted?: boolean }>(
+  localRaw: T[],
+  remoteRaw: T[]
+): T[] {
+  const localMap = new Map<string, T>();
+  localRaw.forEach((item) => localMap.set(item.id, item));
+
+  const mergedMap = new Map<string, T>(localMap);
+
+  remoteRaw.forEach((remote) => {
+    const local = localMap.get(remote.id);
+    if (!local) {
+      mergedMap.set(remote.id, remote);
+    } else {
+      const localTime = new Date(local.updatedAt || (local as any).deletedAt || 0).getTime();
+      const remoteTime = new Date(remote.updatedAt || (remote as any).deletedAt || 0).getTime();
+
+      if (remoteTime > localTime) {
+        mergedMap.set(remote.id, remote);
+      } else if (remoteTime < localTime) {
+        mergedMap.set(remote.id, local);
+      } else {
+        if (remote._isDeleted || local._isDeleted) {
+          mergedMap.set(remote.id, {
+            ...local,
+            ...remote,
+            _isDeleted: true,
+          });
+        } else {
+          mergedMap.set(remote.id, remote);
+        }
+      }
+    }
+  });
+
+  return Array.from(mergedMap.values());
+}
 
 export const DEFAULT_WRITING_CONTROLS: WritingControls = {
   tone: 'editorial',
@@ -527,12 +566,11 @@ const SEED_PROJECTS: WritingProject[] = [
 ];
 
 export const storage = {
-  getProjects(): WritingProject[] {
+  getRawProjectsIncludingDeleted(): WritingProject[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_PROJECTS);
       if (stored) {
         const parsed: WritingProject[] = JSON.parse(stored);
-        // Ensure all stored drafts are converted to semantic rich-text HTML and have complete fields
         return parsed.map((p) => {
           const controls = p.writingControls || p.aiSettings || { ...DEFAULT_WRITING_CONTROLS };
           const normalizedControls: WritingControls = {
@@ -602,38 +640,50 @@ export const storage = {
     } catch (e) {
       console.warn('Failed to read projects from localStorage:', e);
     }
-    // Seed initial projects
     const seeded = SEED_PROJECTS.map((p) => ({
       ...p,
       writingControls: { ...DEFAULT_WRITING_CONTROLS, ...p.aiSettings },
       aiSettings: { ...DEFAULT_WRITING_CONTROLS, ...p.aiSettings },
     }));
-    this.saveProjects(seeded);
+    this.saveRawProjects(seeded);
     return seeded;
   },
 
-  saveProjects(projects: WritingProject[]): void {
+  getProjects(): WritingProject[] {
+    return this.getRawProjectsIncludingDeleted().filter((p) => !p._isDeleted);
+  },
+
+  saveRawProjects(projects: WritingProject[]): void {
     try {
       localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
     } catch (e) {
       console.error('Failed to save projects to localStorage:', e);
     }
     indexedDBService.putMany(STORES.PROJECTS, projects).catch((err) => {
-      console.warn('Async IndexedDB saveProjects error:', err);
+      console.warn('Async IndexedDB saveRawProjects error:', err);
     });
     this.notifyListeners();
   },
 
-  saveProjectsFromRemote(projects: WritingProject[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
-    } catch (e) {
-      console.error('Failed to save remote projects to localStorage:', e);
-    }
-    indexedDBService.putMany(STORES.PROJECTS, projects).catch((err) => {
-      console.warn('Async IndexedDB saveProjectsFromRemote error:', err);
+  saveProjects(projects: WritingProject[]): void {
+    const localRaw = this.getRawProjectsIncludingDeleted();
+    const tombstones = localRaw.filter((p) => p._isDeleted);
+    const tombstoneMap = new Map(tombstones.map((t) => [t.id, t]));
+
+    const mergedMap = new Map<string, WritingProject>();
+    projects.forEach((p) => mergedMap.set(p.id, { ...p, _isDeleted: false }));
+    tombstoneMap.forEach((tomb, id) => {
+      if (!mergedMap.has(id)) {
+        mergedMap.set(id, tomb);
+      }
     });
-    this.notifyListeners();
+    this.saveRawProjects(Array.from(mergedMap.values()));
+  },
+
+  saveProjectsFromRemote(projects: WritingProject[]): void {
+    const localRaw = this.getRawProjectsIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, projects);
+    this.saveRawProjects(merged);
   },
 
   getProjectById(id: string): WritingProject | undefined {
@@ -642,11 +692,12 @@ export const storage = {
   },
 
   saveProject(project: WritingProject): void {
-    const list = this.getProjects();
+    const list = this.getRawProjectsIncludingDeleted();
     const index = list.findIndex((p) => p.id === project.id);
     const controls = project.writingControls || project.aiSettings || { ...DEFAULT_WRITING_CONTROLS };
     const updated: WritingProject = {
       ...project,
+      _isDeleted: false,
       content: ensureSemanticHtml(project.content),
       writingControls: controls,
       aiSettings: controls,
@@ -657,11 +708,11 @@ export const storage = {
     } else {
       list.unshift(updated);
     }
-    this.saveProjects(list);
+    this.saveRawProjects(list);
   },
 
   renameProject(id: string, newTitle: string): WritingProject | undefined {
-    const list = this.getProjects();
+    const list = this.getRawProjectsIncludingDeleted();
     const index = list.findIndex((p) => p.id === id);
     if (index >= 0) {
       list[index] = {
@@ -669,14 +720,14 @@ export const storage = {
         title: newTitle.trim(),
         updatedAt: new Date().toISOString(),
       };
-      this.saveProjects(list);
+      this.saveRawProjects(list);
       return list[index];
     }
     return undefined;
   },
 
   updateProjectStatus(id: string, status: ProjectStatus): WritingProject | undefined {
-    const list = this.getProjects();
+    const list = this.getRawProjectsIncludingDeleted();
     const index = list.findIndex((p) => p.id === id);
     if (index >= 0) {
       list[index] = {
@@ -684,18 +735,57 @@ export const storage = {
         status,
         updatedAt: new Date().toISOString(),
       };
-      this.saveProjects(list);
+      this.saveRawProjects(list);
       return list[index];
     }
     return undefined;
   },
 
   deleteProject(id: string): void {
-    const list = this.getProjects().filter((p) => p.id !== id);
-    this.saveProjects(list);
-    indexedDBService.delete(STORES.PROJECTS, id).catch((err) => {
-      console.warn('Async IndexedDB deleteProject error:', err);
-    });
+    const localRaw = this.getRawProjectsIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = localRaw.findIndex((p) => p.id === id);
+    let updated: WritingProject[];
+
+    if (existingIndex >= 0) {
+      updated = [...localRaw];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+    } else {
+      updated = [
+        ...localRaw,
+        {
+          id,
+          type: 'article',
+          title: 'Deleted Project',
+          createdAt: now,
+          updatedAt: now,
+          status: 'draft',
+          content: '',
+          projectInstructions: '',
+          brief: { ...DEFAULT_BRIEF },
+          outline: [],
+          contentRules: [],
+          writingControls: { ...DEFAULT_WRITING_CONTROLS },
+          aiSettings: { ...DEFAULT_WRITING_CONTROLS },
+          _isDeleted: true,
+          deletedAt: now,
+        },
+      ];
+    }
+
+    this.saveRawProjects(updated);
+    try {
+      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
+        syncEngine.deleteRecord('projects', id);
+      }
+    } catch (e) {
+      console.warn('SyncEngine deleteRecord notice:', e);
+    }
   },
 
   createProject(type: ProjectType, title?: string, initialData?: Partial<WritingProject>): WritingProject {
@@ -857,7 +947,7 @@ export const storage = {
     }
   },
 
-  getGlobalInstructions(): GlobalInstruction[] {
+  getRawGlobalInstructionsIncludingDeleted(): GlobalInstruction[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_GLOBAL_RULES);
       if (stored) {
@@ -866,32 +956,83 @@ export const storage = {
     } catch (e) {
       console.warn('Failed to read global rules from localStorage:', e);
     }
-    this.saveGlobalInstructions(DEFAULT_GLOBAL_INSTRUCTIONS);
-    return DEFAULT_GLOBAL_INSTRUCTIONS;
+    const seed = DEFAULT_GLOBAL_INSTRUCTIONS;
+    this.saveRawGlobalInstructions(seed);
+    return seed;
   },
 
-  saveGlobalInstructions(rules: GlobalInstruction[]): void {
+  getGlobalInstructions(): GlobalInstruction[] {
+    return this.getRawGlobalInstructionsIncludingDeleted().filter((g) => !g._isDeleted);
+  },
+
+  saveRawGlobalInstructions(rules: GlobalInstruction[]): void {
     try {
       localStorage.setItem(STORAGE_KEY_GLOBAL_RULES, JSON.stringify(rules));
     } catch (e) {
       console.error('Failed to save global rules:', e);
     }
     indexedDBService.putMany(STORES.GLOBAL_INSTRUCTIONS, rules).catch((err) => {
-      console.warn('Async IndexedDB saveGlobalInstructions error:', err);
+      console.warn('Async IndexedDB saveRawGlobalInstructions error:', err);
     });
     this.notifyListeners();
   },
 
-  saveGlobalInstructionsFromRemote(rules: GlobalInstruction[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY_GLOBAL_RULES, JSON.stringify(rules));
-    } catch (e) {
-      console.error('Failed to save remote global rules:', e);
-    }
-    indexedDBService.putMany(STORES.GLOBAL_INSTRUCTIONS, rules).catch((err) => {
-      console.warn('Async IndexedDB saveGlobalInstructionsFromRemote error:', err);
+  saveGlobalInstructions(rules: GlobalInstruction[]): void {
+    const localRaw = this.getRawGlobalInstructionsIncludingDeleted();
+    const tombstones = localRaw.filter((g) => g._isDeleted);
+    const tombstoneMap = new Map(tombstones.map((t) => [t.id, t]));
+
+    const mergedMap = new Map<string, GlobalInstruction>();
+    rules.forEach((g) => mergedMap.set(g.id, { ...g, _isDeleted: false }));
+    tombstoneMap.forEach((tomb, id) => {
+      if (!mergedMap.has(id)) {
+        mergedMap.set(id, tomb);
+      }
     });
-    this.notifyListeners();
+    this.saveRawGlobalInstructions(Array.from(mergedMap.values()));
+  },
+
+  saveGlobalInstructionsFromRemote(rules: GlobalInstruction[]): void {
+    const localRaw = this.getRawGlobalInstructionsIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, rules);
+    this.saveRawGlobalInstructions(merged);
+  },
+
+  deleteGlobalInstruction(id: string): void {
+    const localRaw = this.getRawGlobalInstructionsIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = localRaw.findIndex((g) => g.id === id);
+    let updated: GlobalInstruction[];
+
+    if (existingIndex >= 0) {
+      updated = [...localRaw];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+      };
+    } else {
+      updated = [
+        ...localRaw,
+        {
+          id,
+          text: 'Deleted Instruction',
+          category: 'constraint',
+          enabled: false,
+          _isDeleted: true,
+          deletedAt: now,
+        },
+      ];
+    }
+
+    this.saveRawGlobalInstructions(updated);
+    try {
+      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
+        syncEngine.deleteRecord('global_instructions', id);
+      }
+    } catch (e) {
+      console.warn('SyncEngine deleteRecord notice:', e);
+    }
   },
 
   saveSettingsFromRemote(settings: { activeProjectId?: string; activeTheme?: any; globalAiModel?: any }): void {
@@ -941,7 +1082,10 @@ export const storage = {
   // ==========================================
   // STYLE REFERENCE PROFILES (Phase 3)
   // ==========================================
-  getStyleProfiles(): StyleProfile[] {
+  // ==========================================
+  // STYLE REFERENCE PROFILES (Phase 3)
+  // ==========================================
+  getRawStyleProfilesIncludingDeleted(): StyleProfile[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_STYLE_PROFILES);
       if (stored) {
@@ -954,8 +1098,12 @@ export const storage = {
       console.warn('Failed to read style profiles from localStorage:', e);
     }
     const seed = DEFAULT_SEED_STYLE_PROFILES;
-    this.saveStyleProfiles(seed);
+    this.saveRawStyleProfiles(seed);
     return seed;
+  },
+
+  getStyleProfiles(): StyleProfile[] {
+    return this.getRawStyleProfilesIncludingDeleted().filter((p) => !p._isDeleted);
   },
 
   getStyleProfile(id: string): StyleProfile | null {
@@ -963,62 +1111,109 @@ export const storage = {
     return list.find((p) => p.id === id) || null;
   },
 
-  saveStyleProfile(profile: StyleProfile): void {
-    const list = this.getStyleProfiles();
-    const existingIndex = list.findIndex((p) => p.id === profile.id);
-    const updated = [...list];
-    if (existingIndex >= 0) {
-      updated[existingIndex] = {
-        ...profile,
-        updatedAt: new Date().toISOString(),
-      };
-    } else {
-      updated.push({
-        ...profile,
-        createdAt: profile.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-    }
-    this.saveStyleProfiles(updated);
-  },
-
-  saveStyleProfiles(profiles: StyleProfile[]): void {
+  saveRawStyleProfiles(profiles: StyleProfile[]): void {
     try {
       localStorage.setItem(STORAGE_KEY_STYLE_PROFILES, JSON.stringify(profiles));
     } catch (e) {
       console.error('Failed to save style profiles:', e);
     }
     indexedDBService.putMany(STORES.STYLE_PROFILES, profiles).catch((err) => {
-      console.warn('Async IndexedDB saveStyleProfiles error:', err);
+      console.warn('Async IndexedDB saveRawStyleProfiles error:', err);
     });
     this.notifyListeners();
+  },
+
+  saveStyleProfile(profile: StyleProfile): void {
+    const list = this.getRawStyleProfilesIncludingDeleted();
+    const existingIndex = list.findIndex((p) => p.id === profile.id);
+    const updated = [...list];
+    const now = new Date().toISOString();
+    if (existingIndex >= 0) {
+      updated[existingIndex] = {
+        ...profile,
+        _isDeleted: false,
+        updatedAt: now,
+      };
+    } else {
+      updated.push({
+        ...profile,
+        _isDeleted: false,
+        createdAt: profile.createdAt || now,
+        updatedAt: now,
+      });
+    }
+    this.saveRawStyleProfiles(updated);
+  },
+
+  saveStyleProfiles(profiles: StyleProfile[]): void {
+    const localRaw = this.getRawStyleProfilesIncludingDeleted();
+    const tombstones = localRaw.filter((p) => p._isDeleted);
+    const tombstoneMap = new Map(tombstones.map((t) => [t.id, t]));
+
+    const mergedMap = new Map<string, StyleProfile>();
+    profiles.forEach((p) => mergedMap.set(p.id, { ...p, _isDeleted: false }));
+    tombstoneMap.forEach((tomb, id) => {
+      if (!mergedMap.has(id)) {
+        mergedMap.set(id, tomb);
+      }
+    });
+    this.saveRawStyleProfiles(Array.from(mergedMap.values()));
   },
 
   saveStyleProfilesFromRemote(profiles: StyleProfile[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY_STYLE_PROFILES, JSON.stringify(profiles));
-    } catch (e) {
-      console.error('Failed to save remote style profiles:', e);
-    }
-    indexedDBService.putMany(STORES.STYLE_PROFILES, profiles).catch((err) => {
-      console.warn('Async IndexedDB saveStyleProfilesFromRemote error:', err);
-    });
-    this.notifyListeners();
+    const localRaw = this.getRawStyleProfilesIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, profiles);
+    this.saveRawStyleProfiles(merged);
   },
 
   deleteStyleProfile(id: string): void {
-    const list = this.getStyleProfiles();
-    const filtered = list.filter((p) => p.id !== id);
-    this.saveStyleProfiles(filtered);
-    indexedDBService.delete(STORES.STYLE_PROFILES, id).catch((err) => {
-      console.warn('Async IndexedDB deleteStyleProfile error:', err);
-    });
+    const localRaw = this.getRawStyleProfilesIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = localRaw.findIndex((p) => p.id === id);
+    let updated: StyleProfile[];
+
+    if (existingIndex >= 0) {
+      updated = [...localRaw];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+    } else {
+      updated = [
+        ...localRaw,
+        {
+          id,
+          name: 'Deleted Profile',
+          description: '',
+          samples: [],
+          generatedInstructions: [],
+          userEditedInstructions: [],
+          hasUserEdited: false,
+          isActive: false,
+          createdAt: now,
+          updatedAt: now,
+          _isDeleted: true,
+          deletedAt: now,
+        },
+      ];
+    }
+
+    this.saveRawStyleProfiles(updated);
+    try {
+      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
+        syncEngine.deleteRecord('style_profiles', id);
+      }
+    } catch (e) {
+      console.warn('SyncEngine deleteRecord notice:', e);
+    }
   },
 
   // ==========================================
   // INTERNAL LINK LIBRARY (Phase 4)
   // ==========================================
-  getInternalLinks(): InternalLink[] {
+  getRawInternalLinksIncludingDeleted(): InternalLink[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_INTERNAL_LINKS);
       if (stored) {
@@ -1031,8 +1226,12 @@ export const storage = {
       console.warn('Failed to read internal links from localStorage:', e);
     }
     const seed = DEFAULT_SEED_INTERNAL_LINKS;
-    this.saveInternalLinks(seed);
+    this.saveRawInternalLinks(seed);
     return seed;
+  },
+
+  getInternalLinks(): InternalLink[] {
+    return this.getRawInternalLinksIncludingDeleted().filter((l) => !l._isDeleted);
   },
 
   getInternalLink(id: string): InternalLink | null {
@@ -1040,56 +1239,102 @@ export const storage = {
     return list.find((l) => l.id === id) || null;
   },
 
-  saveInternalLink(link: InternalLink): void {
-    const list = this.getInternalLinks();
-    const existingIndex = list.findIndex((l) => l.id === link.id);
-    const updated = [...list];
-    if (existingIndex >= 0) {
-      updated[existingIndex] = {
-        ...link,
-        updatedAt: new Date().toISOString(),
-      };
-    } else {
-      updated.push({
-        ...link,
-        createdAt: link.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-    }
-    this.saveInternalLinks(updated);
-  },
-
-  saveInternalLinks(links: InternalLink[]): void {
+  saveRawInternalLinks(links: InternalLink[]): void {
     try {
       localStorage.setItem(STORAGE_KEY_INTERNAL_LINKS, JSON.stringify(links));
     } catch (e) {
       console.error('Failed to save internal links:', e);
     }
     indexedDBService.putMany(STORES.INTERNAL_LINKS, links).catch((err) => {
-      console.warn('Async IndexedDB saveInternalLinks error:', err);
+      console.warn('Async IndexedDB saveRawInternalLinks error:', err);
     });
     this.notifyListeners();
+  },
+
+  saveInternalLink(link: InternalLink): void {
+    const rawList = this.getRawInternalLinksIncludingDeleted();
+    const existingIndex = rawList.findIndex((l) => l.id === link.id);
+    const updated = [...rawList];
+    const now = new Date().toISOString();
+    if (existingIndex >= 0) {
+      updated[existingIndex] = {
+        ...link,
+        _isDeleted: false,
+        updatedAt: now,
+      };
+    } else {
+      updated.push({
+        ...link,
+        _isDeleted: false,
+        createdAt: link.createdAt || now,
+        updatedAt: now,
+      });
+    }
+    this.saveRawInternalLinks(updated);
+  },
+
+  saveInternalLinks(links: InternalLink[]): void {
+    const localRaw = this.getRawInternalLinksIncludingDeleted();
+    const tombstones = localRaw.filter((l) => l._isDeleted);
+    const tombstoneMap = new Map(tombstones.map((t) => [t.id, t]));
+
+    const mergedMap = new Map<string, InternalLink>();
+    links.forEach((l) => mergedMap.set(l.id, { ...l, _isDeleted: false }));
+    tombstoneMap.forEach((tomb, id) => {
+      if (!mergedMap.has(id)) {
+        mergedMap.set(id, tomb);
+      }
+    });
+    this.saveRawInternalLinks(Array.from(mergedMap.values()));
   },
 
   saveInternalLinksFromRemote(links: InternalLink[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY_INTERNAL_LINKS, JSON.stringify(links));
-    } catch (e) {
-      console.error('Failed to save remote internal links:', e);
-    }
-    indexedDBService.putMany(STORES.INTERNAL_LINKS, links).catch((err) => {
-      console.warn('Async IndexedDB saveInternalLinksFromRemote error:', err);
-    });
-    this.notifyListeners();
+    const localRaw = this.getRawInternalLinksIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, links);
+    this.saveRawInternalLinks(merged);
   },
 
   deleteInternalLink(id: string): void {
-    const list = this.getInternalLinks();
-    const filtered = list.filter((l) => l.id !== id);
-    this.saveInternalLinks(filtered);
-    indexedDBService.delete(STORES.INTERNAL_LINKS, id).catch((err) => {
-      console.warn('Async IndexedDB deleteInternalLink error:', err);
-    });
+    const localRaw = this.getRawInternalLinksIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = localRaw.findIndex((l) => l.id === id);
+    let updated: InternalLink[];
+
+    if (existingIndex >= 0) {
+      updated = [...localRaw];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+    } else {
+      updated = [
+        ...localRaw,
+        {
+          id,
+          title: 'Deleted Link',
+          url: '',
+          topic: '',
+          description: '',
+          category: 'General',
+          active: false,
+          createdAt: now,
+          updatedAt: now,
+          _isDeleted: true,
+          deletedAt: now,
+        },
+      ];
+    }
+
+    this.saveRawInternalLinks(updated);
+    try {
+      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
+        syncEngine.deleteRecord('internal_links', id);
+      }
+    } catch (e) {
+      console.warn('SyncEngine deleteRecord notice:', e);
+    }
   },
 
   // ==========================================
@@ -1136,7 +1381,8 @@ export const storage = {
   },
 
   // Phase 10.5: Saved Ideas System
-  getSavedIdeas(): SavedEditorialIdea[] {
+  // Phase 10.5: Saved Ideas System
+  getRawSavedIdeasIncludingDeleted(): SavedEditorialIdea[] {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_SAVED_IDEAS);
       if (!raw) return [];
@@ -1148,28 +1394,41 @@ export const storage = {
     }
   },
 
-  saveSavedIdeas(ideas: SavedEditorialIdea[]): void {
+  getSavedIdeas(): SavedEditorialIdea[] {
+    return this.getRawSavedIdeasIncludingDeleted().filter((i) => !i._isDeleted);
+  },
+
+  saveRawSavedIdeas(ideas: SavedEditorialIdea[]): void {
     try {
       localStorage.setItem(STORAGE_KEY_SAVED_IDEAS, JSON.stringify(ideas));
     } catch (e) {
       console.error('Failed to save ideas to localStorage:', e);
     }
     indexedDBService.putMany(STORES.SAVED_IDEAS, ideas).catch((err) => {
-      console.warn('Async IndexedDB saveSavedIdeas error:', err);
+      console.warn('Async IndexedDB saveRawSavedIdeas error:', err);
     });
     this.notifyListeners();
   },
 
-  saveSavedIdeasFromRemote(ideas: SavedEditorialIdea[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY_SAVED_IDEAS, JSON.stringify(ideas));
-    } catch (e) {
-      console.error('Failed to save remote ideas to localStorage:', e);
-    }
-    indexedDBService.putMany(STORES.SAVED_IDEAS, ideas).catch((err) => {
-      console.warn('Async IndexedDB saveSavedIdeasFromRemote error:', err);
+  saveSavedIdeas(ideas: SavedEditorialIdea[]): void {
+    const localRaw = this.getRawSavedIdeasIncludingDeleted();
+    const tombstones = localRaw.filter((i) => i._isDeleted);
+    const tombstoneMap = new Map(tombstones.map((t) => [t.id, t]));
+
+    const mergedMap = new Map<string, SavedEditorialIdea>();
+    ideas.forEach((i) => mergedMap.set(i.id, { ...i, _isDeleted: false }));
+    tombstoneMap.forEach((tomb, id) => {
+      if (!mergedMap.has(id)) {
+        mergedMap.set(id, tomb);
+      }
     });
-    this.notifyListeners();
+    this.saveRawSavedIdeas(Array.from(mergedMap.values()));
+  },
+
+  saveSavedIdeasFromRemote(ideas: SavedEditorialIdea[]): void {
+    const localRaw = this.getRawSavedIdeasIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, ideas);
+    this.saveRawSavedIdeas(merged);
   },
 
   saveSavedIdea(idea: SavedEditorialIdea): boolean {
@@ -1184,18 +1443,53 @@ export const storage = {
     if (isDup) {
       return false; // already saved
     }
-    const updated = [idea, ...list];
-    this.saveSavedIdeas(updated);
+    const rawList = this.getRawSavedIdeasIncludingDeleted();
+    const updated = [{ ...idea, _isDeleted: false, savedAt: idea.savedAt || new Date().toISOString() }, ...rawList];
+    this.saveRawSavedIdeas(updated);
     return true;
   },
 
   deleteSavedIdea(id: string): void {
-    const list = this.getSavedIdeas();
-    const filtered = list.filter((item) => item.id !== id);
-    this.saveSavedIdeas(filtered);
-    indexedDBService.delete(STORES.SAVED_IDEAS, id).catch((err) => {
-      console.warn('Async IndexedDB deleteSavedIdea error:', err);
-    });
+    const localRaw = this.getRawSavedIdeasIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = localRaw.findIndex((item) => item.id === id);
+    let updated: SavedEditorialIdea[];
+
+    if (existingIndex >= 0) {
+      updated = [...localRaw];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+    } else {
+      updated = [
+        ...localRaw,
+        {
+          id,
+          title: 'Deleted Idea',
+          angle: '',
+          whyInteresting: '',
+          originalTopic: '',
+          goal: 'Informational',
+          ideaStyle: 'Mixed',
+          savedAt: now,
+          updatedAt: now,
+          _isDeleted: true,
+          deletedAt: now,
+        },
+      ];
+    }
+
+    this.saveRawSavedIdeas(updated);
+    try {
+      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
+        syncEngine.deleteRecord('saved_ideas', id);
+      }
+    } catch (e) {
+      console.warn('SyncEngine deleteRecord notice:', e);
+    }
   },
 
   isIdeaSaved(title: string, angle: string): boolean {
@@ -1229,7 +1523,7 @@ export const storage = {
   // ==========================================
   // RESEARCH REPOSITORY (Studies, Claims, Files)
   // ==========================================
-  getResearchStudies(): ResearchStudy[] {
+  getRawResearchStudiesIncludingDeleted(): ResearchStudy[] {
     let list: ResearchStudy[] = [];
     try {
       const stored = localStorage.getItem(STORAGE_KEY_RESEARCH_STUDIES);
@@ -1244,7 +1538,7 @@ export const storage = {
     }
     if (list.length === 0) {
       list = DEFAULT_SEED_RESEARCH_STUDIES;
-      this.saveResearchStudies(list);
+      this.saveRawResearchStudies(list);
     }
     return list.map((s) => ({
       ...s,
@@ -1260,61 +1554,109 @@ export const storage = {
     }));
   },
 
+  getResearchStudies(): ResearchStudy[] {
+    return this.getRawResearchStudiesIncludingDeleted().filter((s) => !s._isDeleted);
+  },
+
   getResearchStudy(id: string): ResearchStudy | null {
     const list = this.getResearchStudies();
     return list.find((s) => s.id === id) || null;
   },
 
-  saveResearchStudies(studies: ResearchStudy[]): void {
+  saveRawResearchStudies(studies: ResearchStudy[]): void {
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_STUDIES, JSON.stringify(studies));
     } catch (e) {
       console.error('Failed to save research studies to localStorage:', e);
     }
     indexedDBService.putMany(STORES.RESEARCH_STUDIES, studies).catch((err) => {
-      console.warn('Async IndexedDB saveResearchStudies error:', err);
+      console.warn('Async IndexedDB saveRawResearchStudies error:', err);
     });
     this.notifyListeners();
+  },
+
+  saveResearchStudies(studies: ResearchStudy[]): void {
+    const localRaw = this.getRawResearchStudiesIncludingDeleted();
+    const tombstones = localRaw.filter((s) => s._isDeleted);
+    const tombstoneMap = new Map(tombstones.map((t) => [t.id, t]));
+
+    const mergedMap = new Map<string, ResearchStudy>();
+    studies.forEach((s) => mergedMap.set(s.id, { ...s, _isDeleted: false }));
+    tombstoneMap.forEach((tomb, id) => {
+      if (!mergedMap.has(id)) {
+        mergedMap.set(id, tomb);
+      }
+    });
+    this.saveRawResearchStudies(Array.from(mergedMap.values()));
   },
 
   saveResearchStudiesFromRemote(studies: ResearchStudy[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY_RESEARCH_STUDIES, JSON.stringify(studies));
-    } catch (e) {
-      console.error('Failed to save remote research studies to localStorage:', e);
-    }
-    indexedDBService.putMany(STORES.RESEARCH_STUDIES, studies).catch((err) => {
-      console.warn('Async IndexedDB saveResearchStudiesFromRemote error:', err);
-    });
-    this.notifyListeners();
+    const localRaw = this.getRawResearchStudiesIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, studies);
+    this.saveRawResearchStudies(merged);
   },
 
   saveResearchStudy(study: ResearchStudy): void {
-    const list = this.getResearchStudies();
-    const existingIndex = list.findIndex((s) => s.id === study.id);
-    const updated = [...list];
+    const rawList = this.getRawResearchStudiesIncludingDeleted();
+    const existingIndex = rawList.findIndex((s) => s.id === study.id);
+    const updated = [...rawList];
+    const now = new Date().toISOString();
     if (existingIndex >= 0) {
-      updated[existingIndex] = { ...study, updatedAt: new Date().toISOString() };
+      updated[existingIndex] = { ...study, _isDeleted: false, updatedAt: now };
     } else {
       updated.push({
         ...study,
-        createdAt: study.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        _isDeleted: false,
+        createdAt: study.createdAt || now,
+        updatedAt: now,
       });
     }
-    this.saveResearchStudies(updated);
+    this.saveRawResearchStudies(updated);
   },
 
   deleteResearchStudy(id: string): void {
-    const list = this.getResearchStudies();
-    const filtered = list.filter((s) => s.id !== id);
-    this.saveResearchStudies(filtered);
-    indexedDBService.delete(STORES.RESEARCH_STUDIES, id).catch((err) => {
-      console.warn('Async IndexedDB deleteResearchStudy error:', err);
-    });
+    const localRaw = this.getRawResearchStudiesIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = localRaw.findIndex((s) => s.id === id);
+    let updated: ResearchStudy[];
+
+    if (existingIndex >= 0) {
+      updated = [...localRaw];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+    } else {
+      updated = [
+        ...localRaw,
+        {
+          id,
+          title: 'Deleted Study',
+          authors: [],
+          tags: [],
+          dateAdded: now,
+          analysisStatus: 'unanalyzed',
+          createdAt: now,
+          updatedAt: now,
+          _isDeleted: true,
+          deletedAt: now,
+        },
+      ];
+    }
+
+    this.saveRawResearchStudies(updated);
+    try {
+      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
+        syncEngine.deleteRecord('research_studies', id);
+      }
+    } catch (e) {
+      console.warn('SyncEngine deleteRecord notice:', e);
+    }
   },
 
-  getResearchClaims(): ResearchClaim[] {
+  getRawResearchClaimsIncludingDeleted(): ResearchClaim[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_RESEARCH_CLAIMS);
       if (stored) {
@@ -1327,57 +1669,105 @@ export const storage = {
       console.warn('Failed to read research claims from localStorage:', e);
     }
     const seed = DEFAULT_SEED_RESEARCH_CLAIMS;
-    this.saveResearchClaims(seed);
+    this.saveRawResearchClaims(seed);
     return seed;
   },
 
-  saveResearchClaims(claims: ResearchClaim[]): void {
+  getResearchClaims(): ResearchClaim[] {
+    return this.getRawResearchClaimsIncludingDeleted().filter((c) => !c._isDeleted);
+  },
+
+  saveRawResearchClaims(claims: ResearchClaim[]): void {
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_CLAIMS, JSON.stringify(claims));
     } catch (e) {
       console.error('Failed to save research claims to localStorage:', e);
     }
     indexedDBService.putMany(STORES.RESEARCH_CLAIMS, claims).catch((err) => {
-      console.warn('Async IndexedDB saveResearchClaims error:', err);
+      console.warn('Async IndexedDB saveRawResearchClaims error:', err);
     });
     this.notifyListeners();
+  },
+
+  saveResearchClaims(claims: ResearchClaim[]): void {
+    const localRaw = this.getRawResearchClaimsIncludingDeleted();
+    const tombstones = localRaw.filter((c) => c._isDeleted);
+    const tombstoneMap = new Map(tombstones.map((t) => [t.id, t]));
+
+    const mergedMap = new Map<string, ResearchClaim>();
+    claims.forEach((c) => mergedMap.set(c.id, { ...c, _isDeleted: false }));
+    tombstoneMap.forEach((tomb, id) => {
+      if (!mergedMap.has(id)) {
+        mergedMap.set(id, tomb);
+      }
+    });
+    this.saveRawResearchClaims(Array.from(mergedMap.values()));
   },
 
   saveResearchClaimsFromRemote(claims: ResearchClaim[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY_RESEARCH_CLAIMS, JSON.stringify(claims));
-    } catch (e) {
-      console.error('Failed to save remote research claims to localStorage:', e);
-    }
-    indexedDBService.putMany(STORES.RESEARCH_CLAIMS, claims).catch((err) => {
-      console.warn('Async IndexedDB saveResearchClaimsFromRemote error:', err);
-    });
-    this.notifyListeners();
+    const localRaw = this.getRawResearchClaimsIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, claims);
+    this.saveRawResearchClaims(merged);
   },
 
   saveResearchClaim(claim: ResearchClaim): void {
-    const list = this.getResearchClaims();
-    const existingIndex = list.findIndex((c) => c.id === claim.id);
-    const updated = [...list];
+    const rawList = this.getRawResearchClaimsIncludingDeleted();
+    const existingIndex = rawList.findIndex((c) => c.id === claim.id);
+    const updated = [...rawList];
+    const now = new Date().toISOString();
     if (existingIndex >= 0) {
-      updated[existingIndex] = { ...claim, updatedAt: new Date().toISOString() };
+      updated[existingIndex] = { ...claim, _isDeleted: false, updatedAt: now };
     } else {
       updated.push({
         ...claim,
-        createdAt: claim.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        _isDeleted: false,
+        createdAt: claim.createdAt || now,
+        updatedAt: now,
       });
     }
-    this.saveResearchClaims(updated);
+    this.saveRawResearchClaims(updated);
   },
 
   deleteResearchClaim(id: string): void {
-    const list = this.getResearchClaims();
-    const filtered = list.filter((c) => c.id !== id);
-    this.saveResearchClaims(filtered);
-    indexedDBService.delete(STORES.RESEARCH_CLAIMS, id).catch((err) => {
-      console.warn('Async IndexedDB deleteResearchClaim error:', err);
-    });
+    const localRaw = this.getRawResearchClaimsIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = localRaw.findIndex((c) => c.id === id);
+    let updated: ResearchClaim[];
+
+    if (existingIndex >= 0) {
+      updated = [...localRaw];
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+    } else {
+      updated = [
+        ...localRaw,
+        {
+          id,
+          studyId: '',
+          claimText: 'Deleted Claim',
+          claimType: 'source_fact',
+          supportedBySource: '',
+          confidence: 'high',
+          createdAt: now,
+          updatedAt: now,
+          _isDeleted: true,
+          deletedAt: now,
+        },
+      ];
+    }
+
+    this.saveRawResearchClaims(updated);
+    try {
+      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
+        syncEngine.deleteRecord('research_claims', id);
+      }
+    } catch (e) {
+      console.warn('SyncEngine deleteRecord notice:', e);
+    }
   },
 
   getResearchFiles(): ResearchFile[] {

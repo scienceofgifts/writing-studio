@@ -127,6 +127,8 @@ export interface GlobalInstruction {
   text: string;
   category: 'style' | 'constraint' | 'voice' | 'factuality';
   enabled: boolean;
+  _isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export * from './giftGuide';
@@ -461,6 +463,8 @@ export interface WritingProject {
   outlineStructure?: OutlineStructureType; // Applied structure type (essay, standard_article, guide, custom)
   outlineRationale?: string; // Editorial rationale for this outline progression
   outlineMetadata?: OutlineStudioMetadata; // Additional Outline Studio metadata
+  _isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface DiffProposal {

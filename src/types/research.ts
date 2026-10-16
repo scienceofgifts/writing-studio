@@ -23,6 +23,8 @@ export interface ResearchClaim {
   tags?: string[];
   createdAt: string;
   updatedAt: string;
+  _isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface PotentialArticleIdea {
@@ -98,6 +100,8 @@ export interface ResearchStudy {
   claims?: ResearchClaim[];
   createdAt: string;
   updatedAt: string;
+  _isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface EditorialDraftPackageSection {

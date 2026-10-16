@@ -15,6 +15,8 @@ export interface InternalLink {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  _isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export type LinkOpportunityStatus = 'pending' | 'accepted' | 'rejected' | 'stale';

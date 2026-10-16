@@ -58,10 +58,18 @@ class SyncEngine {
       this.handleAuthChange(user);
     });
 
-    // Subscribe to local storage edits
-    this.storageUnsubscribe = storage.subscribe(() => {
-      this.handleLocalEdit();
-    });
+    // Subscribe to local storage edits after initialization tick
+    setTimeout(() => {
+      try {
+        if (typeof storage !== 'undefined' && typeof storage.subscribe === 'function') {
+          this.storageUnsubscribe = storage.subscribe(() => {
+            this.handleLocalEdit();
+          });
+        }
+      } catch (e) {
+        console.warn('Storage subscription notice:', e);
+      }
+    }, 100);
   }
 
   // ==========================================
@@ -244,7 +252,7 @@ class SyncEngine {
     await this.mergeCollection<WritingProject>(
       userId,
       'projects',
-      storage.getProjects(),
+      storage.getRawProjectsIncludingDeleted(),
       (merged) => storage.saveProjectsFromRemote(merged)
     );
 
@@ -252,7 +260,7 @@ class SyncEngine {
     await this.mergeCollection<StyleProfile>(
       userId,
       'style_profiles',
-      storage.getStyleProfiles(),
+      storage.getRawStyleProfilesIncludingDeleted(),
       (merged) => storage.saveStyleProfilesFromRemote(merged)
     );
 
@@ -260,7 +268,7 @@ class SyncEngine {
     await this.mergeCollection<InternalLink>(
       userId,
       'internal_links',
-      storage.getInternalLinks(),
+      storage.getRawInternalLinksIncludingDeleted(),
       (merged) => storage.saveInternalLinksFromRemote(merged)
     );
 
@@ -268,7 +276,7 @@ class SyncEngine {
     await this.mergeCollection<ResearchStudy>(
       userId,
       'research_studies',
-      storage.getResearchStudies(),
+      storage.getRawResearchStudiesIncludingDeleted(),
       (merged) => storage.saveResearchStudiesFromRemote(merged)
     );
 
@@ -276,7 +284,7 @@ class SyncEngine {
     await this.mergeCollection<ResearchClaim>(
       userId,
       'research_claims',
-      storage.getResearchClaims(),
+      storage.getRawResearchClaimsIncludingDeleted(),
       (merged) => storage.saveResearchClaimsFromRemote(merged)
     );
 
@@ -284,7 +292,7 @@ class SyncEngine {
     await this.mergeCollection<SavedEditorialIdea>(
       userId,
       'saved_ideas',
-      storage.getSavedIdeas(),
+      storage.getRawSavedIdeasIncludingDeleted(),
       (merged) => storage.saveSavedIdeasFromRemote(merged)
     );
 
@@ -292,7 +300,7 @@ class SyncEngine {
     await this.mergeCollection<GlobalInstruction>(
       userId,
       'global_instructions',
-      storage.getGlobalInstructions(),
+      storage.getRawGlobalInstructionsIncludingDeleted(),
       (merged) => storage.saveGlobalInstructionsFromRemote(merged)
     );
 
@@ -334,25 +342,16 @@ class SyncEngine {
       const remote = remoteMap.get(id);
 
       if (local && !remote) {
-        // Local only -> upload to Firestore if not deleted
-        if (!local._isDeleted) {
-          finalLocalList.push(local);
-          uploadTasks.push(this.writeDocToFirestore(userId, collectionName, id, local));
-        }
+        // Local only -> keep in local state and upload to Firestore (whether active or tombstone)
+        finalLocalList.push(local);
+        uploadTasks.push(this.writeDocToFirestore(userId, collectionName, id, local));
       } else if (!local && remote) {
-        // Remote only -> download if not deleted
-        if (!remote._isDeleted) {
-          finalLocalList.push(remote);
-        }
+        // Remote only -> keep in local state (whether active or tombstone)
+        finalLocalList.push(remote);
       } else if (local && remote) {
         // Both exist -> compare revision timestamps
-        if (remote._isDeleted) {
-          // Soft-deleted on remote -> omit locally
-          continue;
-        }
-
-        const localTime = new Date(local.updatedAt || 0).getTime();
-        const remoteTime = new Date(remote.updatedAt || 0).getTime();
+        const localTime = new Date(local.updatedAt || (local as any).deletedAt || 0).getTime();
+        const remoteTime = new Date(remote.updatedAt || (remote as any).deletedAt || 0).getTime();
 
         if (remoteTime > localTime) {
           // Remote is newer -> adopt remote
@@ -362,8 +361,16 @@ class SyncEngine {
           finalLocalList.push(local);
           uploadTasks.push(this.writeDocToFirestore(userId, collectionName, id, local));
         } else {
-          // Equal -> keep local/remote
-          finalLocalList.push(local);
+          // Timestamps equal: if either is deleted, prefer tombstone
+          if (local._isDeleted || remote._isDeleted) {
+            const merged = { ...remote, ...local, _isDeleted: true };
+            finalLocalList.push(merged);
+            if (!remote._isDeleted) {
+              uploadTasks.push(this.writeDocToFirestore(userId, collectionName, id, merged));
+            }
+          } else {
+            finalLocalList.push(local);
+          }
         }
       }
     }
@@ -443,13 +450,7 @@ class SyncEngine {
         (snapshot) => {
           this.isApplyingRemote = true;
           try {
-            const remoteDocs: any[] = [];
-            snapshot.docs.forEach((d) => {
-              const data = d.data();
-              if (!data._isDeleted) {
-                remoteDocs.push(data);
-              }
-            });
+            const remoteDocs: any[] = snapshot.docs.map((d) => d.data());
             colDef.apply(remoteDocs);
             this.lastSyncedAt = new Date().toISOString();
             this.status = 'synced';
@@ -520,13 +521,13 @@ class SyncEngine {
       const userId = this.currentUser.uid;
 
       await Promise.all([
-        this.pushCollection(userId, 'projects', storage.getProjects()),
-        this.pushCollection(userId, 'style_profiles', storage.getStyleProfiles()),
-        this.pushCollection(userId, 'internal_links', storage.getInternalLinks()),
-        this.pushCollection(userId, 'research_studies', storage.getResearchStudies()),
-        this.pushCollection(userId, 'research_claims', storage.getResearchClaims()),
-        this.pushCollection(userId, 'saved_ideas', storage.getSavedIdeas()),
-        this.pushCollection(userId, 'global_instructions', storage.getGlobalInstructions()),
+        this.pushCollection(userId, 'projects', storage.getRawProjectsIncludingDeleted()),
+        this.pushCollection(userId, 'style_profiles', storage.getRawStyleProfilesIncludingDeleted()),
+        this.pushCollection(userId, 'internal_links', storage.getRawInternalLinksIncludingDeleted()),
+        this.pushCollection(userId, 'research_studies', storage.getRawResearchStudiesIncludingDeleted()),
+        this.pushCollection(userId, 'research_claims', storage.getRawResearchClaimsIncludingDeleted()),
+        this.pushCollection(userId, 'saved_ideas', storage.getRawSavedIdeasIncludingDeleted()),
+        this.pushCollection(userId, 'global_instructions', storage.getRawGlobalInstructionsIncludingDeleted()),
         this.writeDocToFirestore(userId, 'settings', 'user_settings', {
           activeProjectId: storage.getActiveProjectId(),
           activeTheme: storage.getTheme(),

@@ -41,6 +41,9 @@ export interface SavedEditorialIdea {
   goal: IdeaGoal;
   ideaStyle: IdeaStyle;
   savedAt: string;
+  _isDeleted?: boolean;
+  deletedAt?: string;
+  updatedAt?: string;
 }
 
 export interface IdeaGenerationRequest {

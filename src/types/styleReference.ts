@@ -42,6 +42,8 @@ export interface StyleProfile {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  _isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface StyleAnalysisRequest {

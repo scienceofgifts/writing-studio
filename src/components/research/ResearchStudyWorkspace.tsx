@@ -193,6 +193,7 @@ export const ResearchStudyWorkspace: React.FC<ResearchStudyWorkspaceProps> = ({
   };
 
   const handleDeleteClaim = (claimId: string) => {
+    storage.deleteResearchClaim(claimId);
     const updatedClaims = (study.claims || []).filter((c) => c.id !== claimId);
     const updatedStudy: ResearchStudy = {
       ...study,

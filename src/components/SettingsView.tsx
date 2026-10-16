@@ -86,7 +86,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBackToStudio, onNa
   };
 
   const handleDelete = (id: string) => {
-    saveUpdated(instructions.filter((i) => i.id !== id));
+    storage.deleteGlobalInstruction(id);
+    setInstructions(storage.getGlobalInstructions());
+    setIsSavedNotice(true);
+    setTimeout(() => setIsSavedNotice(false), 2000);
   };
 
   const handleResetDefaults = () => {
