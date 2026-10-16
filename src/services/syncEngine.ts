@@ -105,9 +105,24 @@ class SyncEngine {
       const user = await signInWithGoogle();
       return user;
     } catch (err: any) {
-      this.status = 'error';
-      this.errorMessage = err?.message || 'Failed to sign in with Google.';
-      this.notifyStatusChange();
+      if (
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request'
+      ) {
+        // User intentionally closed or cancelled the Google sign-in window.
+        // Revert status to signed_out gracefully without alarming error state.
+        this.status = 'signed_out';
+        this.errorMessage = null;
+        this.notifyStatusChange();
+      } else if (err?.code === 'auth/popup-blocked') {
+        this.status = 'signed_out';
+        this.errorMessage = 'Sign-in popup was blocked by your browser. Please allow popups and try again.';
+        this.notifyStatusChange();
+      } else {
+        this.status = 'error';
+        this.errorMessage = err?.message || 'Failed to sign in with Google.';
+        this.notifyStatusChange();
+      }
       throw err;
     }
   }

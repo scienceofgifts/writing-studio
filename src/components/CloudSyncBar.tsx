@@ -8,6 +8,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { syncEngine, SyncStatusInfo } from '../services/syncEngine';
 import { Cloud, CloudOff, RefreshCw, CheckCircle2, LogOut, User, Loader2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
+import { toast } from '../services/toastService';
+
 export const CloudSyncBar: React.FC = () => {
   const [syncInfo, setSyncInfo] = useState<SyncStatusInfo>(syncEngine.getStatusInfo());
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -38,8 +40,20 @@ export const CloudSyncBar: React.FC = () => {
     setIsSigningIn(true);
     try {
       await syncEngine.login();
-    } catch (err) {
+    } catch (err: any) {
       setIsSigningIn(false);
+      if (
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request'
+      ) {
+        // User closed the popup, silently reset state without error toast
+        return;
+      }
+      if (err?.code === 'auth/popup-blocked') {
+        toast.warning('Sign-in Popup Blocked', 'Please allow popups for this domain to sign in with Google.');
+      } else {
+        toast.error('Sign-In Failed', err?.message || 'Could not sign in with Google.');
+      }
     }
   };
 
