@@ -10,7 +10,8 @@ import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse');
+const pdfParseMod = require('pdf-parse');
+const pdfParse = typeof pdfParseMod === 'function' ? pdfParseMod : (pdfParseMod.default || pdfParseMod);
 import { fetchUrlMetadata, fetchProductUrlMetadata, fetchHtmlWithSecurity, extractProductMetadataFromHtml } from './src/server/urlMetadata';
 
 dotenv.config();

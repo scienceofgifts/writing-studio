@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Link,
@@ -17,14 +17,18 @@ import { toast } from '../../services/toastService';
 
 interface AddResearchModalProps {
   isOpen: boolean;
+  study?: ResearchStudy | null;
   onClose: () => void;
   onStudyCreated: (study: ResearchStudy) => void;
+  onStudyUpdated?: (study: ResearchStudy) => void;
 }
 
 export const AddResearchModal: React.FC<AddResearchModalProps> = ({
   isOpen,
+  study,
   onClose,
   onStudyCreated,
+  onStudyUpdated,
 }) => {
   const [activeTab, setActiveTab] = useState<'url' | 'pdf' | 'manual'>('url');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -54,8 +58,6 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
   const [tags, setTags] = useState('Gifting Psychology, Material Permanence');
   const [notes, setNotes] = useState('');
 
-  if (!isOpen) return null;
-
   const resetForm = () => {
     setUrlInput('');
     setUrlLookupError(null);
@@ -75,6 +77,28 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
     setTags('Gifting Psychology, Material Permanence');
     setNotes('');
   };
+
+  useEffect(() => {
+    if (isOpen) {
+      if (study) {
+        setTitle(study.title || '');
+        setAuthors(Array.isArray(study.authors) ? study.authors.join(', ') : '');
+        setPublication(study.publication || '');
+        setPublicationYear(String(study.publicationYear || ''));
+        setDoi(study.doi || '');
+        setSourceUrl(study.sourceUrl || '');
+        setAbstract(study.abstract || '');
+        setTags(Array.isArray(study.tags) ? study.tags.join(', ') : 'Gifting Psychology, Material Permanence');
+        setNotes(study.notes || '');
+        setUrlInput(study.sourceUrl || study.doi || '');
+        setExtractedTextPreview(study.extractedText || '');
+      } else {
+        resetForm();
+      }
+    }
+  }, [isOpen, study]);
+
+  if (!isOpen) return null;
 
   const handleClose = () => {
     resetForm();
@@ -163,8 +187,8 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
     setIsSubmitting(true);
     try {
       const nowIso = new Date().toISOString();
-      const studyId = `study-${Date.now()}`;
-      let fileId: string | undefined = undefined;
+      const studyId = study ? study.id : `study-${Date.now()}`;
+      let fileId: string | undefined = study ? study.fileId : undefined;
 
       // If a PDF file was uploaded, store the research file in IndexedDB
       if (selectedFile) {
@@ -198,7 +222,8 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
         .map((t) => t.trim())
         .filter(Boolean);
 
-      const newStudy: ResearchStudy = {
+      const updatedStudy: ResearchStudy = {
+        ...(study || {}),
         id: studyId,
         title: title.trim(),
         authors: authorsList.length > 0 ? authorsList : ['Unspecified Authors'],
@@ -208,24 +233,29 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
         sourceUrl: sourceUrl.trim() || undefined,
         abstract: abstract.trim() || undefined,
         tags: tagsList,
-        dateAdded: nowIso,
-        analysisStatus: 'unanalyzed',
+        dateAdded: study ? study.dateAdded : nowIso,
+        analysisStatus: study ? study.analysisStatus : 'unanalyzed',
         notes: notes.trim() || undefined,
         fileId,
-        fileName: selectedFile ? selectedFile.name : undefined,
-        fileSize: selectedFile ? selectedFile.size : undefined,
-        extractedText: extractedTextPreview.trim() || undefined,
-        claims: [],
-        createdAt: nowIso,
+        fileName: selectedFile ? selectedFile.name : (study ? study.fileName : undefined),
+        fileSize: selectedFile ? selectedFile.size : (study ? study.fileSize : undefined),
+        extractedText: extractedTextPreview.trim() || (study ? study.extractedText : undefined),
+        claims: study ? study.claims || [] : [],
+        createdAt: study ? study.createdAt : nowIso,
         updatedAt: nowIso,
       };
 
-      storage.saveResearchStudy(newStudy);
-      toast.success('Research Study Added', `"${newStudy.title}" added to the Research Library.`);
-      onStudyCreated(newStudy);
+      storage.saveResearchStudy(updatedStudy);
+      if (study) {
+        toast.success('Study Updated', `"${updatedStudy.title}" updated successfully.`);
+        if (onStudyUpdated) onStudyUpdated(updatedStudy);
+      } else {
+        toast.success('Research Study Added', `"${updatedStudy.title}" added to the Research Library.`);
+        onStudyCreated(updatedStudy);
+      }
       handleClose();
     } catch (err: any) {
-      console.error('Failed to create research study:', err);
+      console.error('Failed to save research study:', err);
       toast.error('Save Failed', 'Could not save the research study.');
     } finally {
       setIsSubmitting(false);
@@ -242,8 +272,12 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
               <BookOpen className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-serif font-bold text-[#1e232a] tracking-tight">Add Research Study</h2>
-              <p className="text-xs text-[#736c61]">Import papers, extract source text, and prepare editorial claims.</p>
+              <h2 className="text-base font-serif font-bold text-[#1e232a] tracking-tight">
+                {study ? 'Edit Research Study' : 'Add Research Study'}
+              </h2>
+              <p className="text-xs text-[#736c61]">
+                {study ? 'Update academic metadata, source links, and editorial notes.' : 'Import papers, extract source text, and prepare editorial claims.'}
+              </p>
             </div>
           </div>
           <button
@@ -564,7 +598,7 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
                   <span>Saving Record...</span>
                 </>
               ) : (
-                <span>Save to Research Library</span>
+                <span>{study ? 'Save Changes' : 'Save to Research Library'}</span>
               )}
             </button>
           </div>

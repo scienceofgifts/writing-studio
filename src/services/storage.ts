@@ -1615,6 +1615,7 @@ export const storage = {
   },
 
   deleteResearchStudy(id: string): void {
+    console.log('[Storage] deleteResearchStudy invoked for ID:', id);
     const localRaw = this.getRawResearchStudiesIncludingDeleted();
     const now = new Date().toISOString();
     const existingIndex = localRaw.findIndex((s) => s.id === id);
@@ -1628,6 +1629,7 @@ export const storage = {
         deletedAt: now,
         updatedAt: now,
       };
+      console.log('[Storage] Marked existing research study as deleted (tombstone):', id);
     } else {
       updated = [
         ...localRaw,
@@ -1644,15 +1646,18 @@ export const storage = {
           deletedAt: now,
         },
       ];
+      console.log('[Storage] Created new tombstone for missing research study ID:', id);
     }
 
     this.saveRawResearchStudies(updated);
+    console.log('[Storage] saveRawResearchStudies completed successfully for ID:', id);
     try {
       if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
         syncEngine.deleteRecord('research_studies', id);
+        console.log('[Storage] syncEngine.deleteRecord called for study ID:', id);
       }
     } catch (e) {
-      console.warn('SyncEngine deleteRecord notice:', e);
+      console.warn('[Storage] SyncEngine deleteRecord notice:', e);
     }
   },
 

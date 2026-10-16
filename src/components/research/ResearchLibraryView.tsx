@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   BookOpen,
   Plus,
@@ -15,12 +15,15 @@ import {
   CheckCircle2,
   Clock,
   Layers,
+  Trash2,
+  Edit3,
 } from 'lucide-react';
 import { ResearchStudy } from '../../types/research';
 import { storage } from '../../services/storage';
 import { AddResearchModal } from './AddResearchModal';
 import { ResearchIdeasModal } from './ResearchIdeasModal';
 import { EditorialIdea } from '../../types/ideaGenerator';
+import { toast } from '../../services/toastService';
 
 interface ResearchLibraryViewProps {
   onOpenStudy: (studyId: string) => void;
@@ -34,6 +37,14 @@ export const ResearchLibraryView: React.FC<ResearchLibraryViewProps> = ({
   onUseIdea,
 }) => {
   const [studies, setStudies] = useState<ResearchStudy[]>(() => storage.getResearchStudies());
+
+  useEffect(() => {
+    const unsubscribe = storage.subscribe(() => {
+      console.log('[ResearchLibraryView] Storage updated via subscription, refreshing studies list');
+      setStudies(storage.getResearchStudies());
+    });
+    return unsubscribe;
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'analyzed' | 'unanalyzed'>('all');
   const [selectedTag, setSelectedTag] = useState<string>('all');
@@ -42,6 +53,7 @@ export const ResearchLibraryView: React.FC<ResearchLibraryViewProps> = ({
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isIdeasModalOpen, setIsIdeasModalOpen] = useState(false);
+  const [editingStudy, setEditingStudy] = useState<ResearchStudy | null>(null);
 
   // Extract all unique tags
   const allTags = useMemo(() => {
@@ -369,10 +381,50 @@ export const ResearchLibraryView: React.FC<ResearchLibraryViewProps> = ({
                     )}
                   </div>
 
-                  <span className="flex items-center gap-0.5 text-amber-900 font-semibold group-hover:translate-x-0.5 transition-transform">
-                    <span>Open</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingStudy(study);
+                        setIsAddModalOpen(true);
+                      }}
+                      className="p-1.5 rounded-lg text-[#857d72] hover:text-amber-900 hover:bg-amber-50 transition-colors"
+                      title="Edit Study"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        console.log('[ResearchLibrary] Delete button clicked for study ID:', study.id, study.title);
+                        if (window.confirm(`Are you sure you want to delete "${study.title}" from the Research Library?`)) {
+                          console.log('[ResearchLibrary] Deletion confirmed for study ID:', study.id);
+                          try {
+                            storage.deleteResearchStudy(study.id);
+                            const remaining = storage.getResearchStudies();
+                            console.log('[ResearchLibrary] After delete, remaining studies count:', remaining.length);
+                            setStudies(remaining);
+                            toast.info('Study Removed', `Deleted "${study.title}".`);
+                          } catch (err) {
+                            console.error('[ResearchLibrary] Error deleting study:', err);
+                            toast.error('Deletion Failed', `Could not delete "${study.title}".`);
+                          }
+                        }
+                      }}
+                      className="p-1.5 rounded-lg text-[#857d72] hover:text-rose-700 hover:bg-rose-50 transition-colors"
+                      title="Delete Study"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <span className="flex items-center gap-0.5 text-amber-900 font-semibold group-hover:translate-x-0.5 transition-transform">
+                      <span>Open</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -380,11 +432,16 @@ export const ResearchLibraryView: React.FC<ResearchLibraryViewProps> = ({
         )}
       </div>
 
-      {/* Add Research Modal */}
+      {/* Add / Edit Research Modal */}
       <AddResearchModal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
+        study={editingStudy}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          setEditingStudy(null);
+        }}
         onStudyCreated={handleStudyCreated}
+        onStudyUpdated={handleStudyCreated}
       />
 
       {/* Research to Ideas Modal */}
