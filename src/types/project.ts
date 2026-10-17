@@ -200,6 +200,17 @@ export interface EditorialDirection {
   editorsDirection: string;
 }
 
+export interface BriefReference {
+  studyId?: string;
+  title: string;
+  authors: string[];
+  publication?: string;
+  publicationYear?: string;
+  doiOrUrl?: string;
+  isVerifiedMatch: boolean;
+  verificationNote?: string;
+}
+
 export interface StructuredEditorialBrief {
   workingTitle: string;
   topic: string;
@@ -216,6 +227,7 @@ export interface StructuredEditorialBrief {
   factualContext: string[]; // Clearly distinguished factual / research findings
   editorialInterpretation: string[]; // Clearly distinguished editorial synthesis
   internalLinkOpportunities: string[];
+  references?: BriefReference[];
   styleConsiderations?: string;
   generatedAt?: string;
   updatedAt?: string;

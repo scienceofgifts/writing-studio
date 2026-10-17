@@ -34,7 +34,23 @@ export async function fetchLinkMetadata(
       }),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!res.ok) {
+        return {
+          ok: false,
+          error: `Server responded with status ${res.status} (${res.statusText})`,
+        };
+      }
+      return {
+        ok: false,
+        error: 'Received invalid response format from server.',
+      };
+    }
+
     if (!res.ok) {
       return {
         ok: false,
@@ -84,7 +100,23 @@ export async function fetchProductMetadata(
       }),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!res.ok) {
+        return {
+          ok: false,
+          error: `Server responded with status ${res.status} (${res.statusText})`,
+        };
+      }
+      return {
+        ok: false,
+        error: 'Received invalid response format from server.',
+      };
+    }
+
     if (!res.ok) {
       return {
         ok: false,

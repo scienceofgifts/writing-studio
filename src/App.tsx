@@ -494,6 +494,18 @@ export default function App() {
     });
   };
 
+  const handleRestoreLinkOpportunity = (oppId: string) => {
+    if (!activeProject) return;
+    const updatedOpportunities = (activeProject.linkOpportunities || []).map((o) =>
+      o.id === oppId ? { ...o, status: 'pending' as const } : o
+    );
+    handleUpdateActiveProject({
+      ...activeProject,
+      linkOpportunities: updatedOpportunities,
+    });
+    toast.success('Recommendation Restored', 'Returned to active recommendations.');
+  };
+
   const handleRejectAllLinkOpportunities = () => {
     if (!activeProject) return;
     const updatedOpportunities = (activeProject.linkOpportunities || []).map((o) => ({
@@ -985,6 +997,7 @@ export default function App() {
           isOpen={true}
           onClose={handleClosePanel}
           project={activeProject}
+          editorRef={editorRef}
           onUpdateOpportunities={(opps) =>
             handleUpdateActiveProject({
               ...activeProject,
@@ -994,6 +1007,7 @@ export default function App() {
           onAcceptOpportunity={handleAcceptLinkOpportunity}
           onAcceptAllOpportunities={handleAcceptAllLinkOpportunities}
           onRejectOpportunity={handleRejectLinkOpportunity}
+          onRestoreOpportunity={handleRestoreLinkOpportunity}
           onRejectAllOpportunities={handleRejectAllLinkOpportunities}
         />
       )}

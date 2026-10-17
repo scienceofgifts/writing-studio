@@ -42,6 +42,7 @@ import {
   ChevronDown,
   ChevronRight,
   Info,
+  ExternalLink,
 } from 'lucide-react';
 
 interface EditorialDevelopmentDrawerProps {
@@ -1443,7 +1444,77 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                         </div>
                       </div>
 
-                      {/* 8. Internal Links & Suggested Takeaway */}
+                      {/* 8. Research References & Verified Sources */}
+                      <div className="pt-2 border-t border-[#f0ede6]">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <BookOpen className="w-4 h-4 text-amber-900" />
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#1e232a]">
+                              Research References & Verified Sources ({brief.references?.length || 0})
+                            </span>
+                          </div>
+                        </div>
+                        {brief.references && brief.references.length > 0 ? (
+                          <div className="space-y-2">
+                            {brief.references.map((ref, i) => (
+                              <div
+                                key={i}
+                                className={`p-3 rounded-lg border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                                  ref.isVerifiedMatch
+                                    ? 'bg-emerald-50/40 border-emerald-200 text-emerald-950'
+                                    : 'bg-amber-50/60 border-amber-300 text-amber-950'
+                                }`}
+                              >
+                                <div className="space-y-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-editorial font-bold text-sm text-[#1e232a] truncate">
+                                      {ref.title}
+                                    </span>
+                                    {ref.isVerifiedMatch ? (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200 inline-flex items-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                        Verified Library Source
+                                      </span>
+                                    ) : (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1">
+                                        <AlertCircle className="w-3 h-3 text-amber-800" />
+                                        Unverified Citation (Review Required)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-[#615a50] truncate">
+                                    {Array.isArray(ref.authors) ? ref.authors.join(', ') : ref.authors}
+                                    {ref.publication ? ` • ${ref.publication}` : ''}
+                                    {ref.publicationYear ? ` (${ref.publicationYear})` : ''}
+                                  </div>
+                                  {ref.verificationNote && (
+                                    <div className="text-[10px] text-[#736c61] italic">
+                                      {ref.verificationNote}
+                                    </div>
+                                  )}
+                                </div>
+                                {ref.doiOrUrl && (
+                                  <a
+                                    href={ref.doiOrUrl.startsWith('http') ? ref.doiOrUrl : `https://doi.org/${ref.doiOrUrl}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2.5 py-1 bg-white border border-[#dcd6ca] rounded text-[11px] font-semibold text-[#1e232a] hover:bg-[#f5f2ea] transition-colors inline-flex items-center gap-1 shrink-0 self-start sm:self-center"
+                                  >
+                                    <span>Source Link</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-3 bg-stone-50 border border-stone-200 rounded-lg text-xs text-[#736c61] italic">
+                            No structured research references attached to this brief.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 9. Internal Links & Suggested Takeaway */}
                       <div className="pt-2 border-t border-[#f0ede6] space-y-2.5">
                         {brief.internalLinkOpportunities && brief.internalLinkOpportunities.length > 0 && (
                           <div className="text-xs">

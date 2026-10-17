@@ -47,6 +47,7 @@ import {
   Link2,
   Wand2,
   Cpu,
+  Sliders,
 } from 'lucide-react';
 import { ModelId } from '../../types/models';
 import { ALL_MODELS, getModelDefinition } from '../../services/modelRegistry';
@@ -103,6 +104,7 @@ export const EditorialIntelligenceDrawer: React.FC<EditorialIntelligenceDrawerPr
   const [isReviewLoading, setIsReviewLoading] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<'all' | 'critical_important' | 'rules' | 'ai_repetition' | 'suggestions'>('all');
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [isReviewSettingsOpen, setIsReviewSettingsOpen] = useState(false);
 
   const review: EditorialReviewResult | undefined = project.editorialReview;
 
@@ -551,151 +553,177 @@ export const EditorialIntelligenceDrawer: React.FC<EditorialIntelligenceDrawerPr
       {/* ========================================================================= */}
       {activeTab === 'review' && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* CONFIGURATION PANEL */}
-          <div className="p-4 bg-white border-b border-[#e5dfd3] shrink-0 space-y-3.5 text-xs">
-            {/* Scope Selector */}
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-[#736c61] mb-1.5">
-                Review Scope
-              </label>
-              <div className="grid grid-cols-3 gap-1.5 p-0.5 bg-[#f5f1e8] rounded-lg border border-[#e5dfd3]">
-                <button
-                  type="button"
-                  onClick={() => setScope('all')}
-                  className={`py-1.5 px-2 rounded-md font-semibold text-center transition-colors ${
-                    scope === 'all'
-                      ? 'bg-white shadow-2xs text-[#1e232a]'
-                      : 'text-[#6e685f] hover:text-[#1e232a]'
-                  }`}
-                >
-                  Entire Document
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setScope('selection')}
-                  className={`py-1.5 px-2 rounded-md font-semibold text-center transition-colors flex items-center justify-center gap-1 ${
-                    scope === 'selection'
-                      ? 'bg-white shadow-2xs text-[#1e232a]'
-                      : 'text-[#6e685f] hover:text-[#1e232a]'
-                  }`}
-                >
-                  <MousePointer className="w-3 h-3 text-amber-700" />
-                  <span>Selection</span>
-                  {selectedText && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setScope('section')}
-                  className={`py-1.5 px-2 rounded-md font-semibold text-center transition-colors ${
-                    scope === 'section'
-                      ? 'bg-white shadow-2xs text-[#1e232a]'
-                      : 'text-[#6e685f] hover:text-[#1e232a]'
-                  }`}
-                >
-                  Section
-                </button>
+          {/* CONFIGURATION PANEL & COLLAPSIBLE REVIEW SETTINGS */}
+          <div className="p-4 bg-white border-b border-[#e5dfd3] shrink-0 space-y-3 text-xs">
+            {/* Summary & Toggle Header for Review Settings */}
+            <div className="flex items-center justify-between bg-[#f6f3eb] border border-[#e5dfd3] rounded-lg p-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <Sliders className="w-4 h-4 text-amber-800 shrink-0" />
+                <div className="min-w-0 text-[11px]">
+                  <span className="font-semibold text-[#1e232a]">
+                    Mode: {mode === 'full' ? 'Full Review' : mode.replace(/_/g, ' ')}
+                  </span>
+                  <span className="mx-1.5 text-[#a8a095]">|</span>
+                  <span className="text-[#6e685f] truncate">
+                    Scope: {scope === 'all' ? 'Entire Document' : scope === 'selection' ? 'Selection' : 'Section'}
+                  </span>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsReviewSettingsOpen(!isReviewSettingsOpen)}
+                className="px-2 py-1 bg-white border border-[#dcd6ca] rounded-md font-semibold text-[#4a443b] hover:bg-[#ede8dc] transition-colors inline-flex items-center gap-1 shrink-0 cursor-pointer"
+              >
+                <span>{isReviewSettingsOpen ? 'Hide Settings' : 'Review Settings'}</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${isReviewSettingsOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
 
-              {scope === 'selection' && (
-                <div className="mt-1.5 p-2 bg-amber-50/80 border border-amber-200/80 rounded-md text-[11px] text-amber-900">
-                  {selectedText ? (
-                    <span className="line-clamp-2 italic">
-                      &ldquo;{selectedText}&rdquo; ({selectedText.split(/\s+/).filter(Boolean).length} words selected)
-                    </span>
-                  ) : (
-                    <span className="text-amber-800">
-                      No text currently selected in the editor. Highlight text or switch to Entire Document.
-                    </span>
+            {/* Collapsible Advanced Settings Section */}
+            {isReviewSettingsOpen && (
+              <div className="space-y-3 pt-2 border-t border-[#f0ede6] animate-in fade-in duration-150">
+                {/* Scope Selector */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-[#736c61] mb-1.5">
+                    Review Scope
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5 p-0.5 bg-[#f5f1e8] rounded-lg border border-[#e5dfd3]">
+                    <button
+                      type="button"
+                      onClick={() => setScope('all')}
+                      className={`py-1.5 px-2 rounded-md font-semibold text-center transition-colors ${
+                        scope === 'all'
+                          ? 'bg-white shadow-2xs text-[#1e232a]'
+                          : 'text-[#6e685f] hover:text-[#1e232a]'
+                      }`}
+                    >
+                      Entire Document
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScope('selection')}
+                      className={`py-1.5 px-2 rounded-md font-semibold text-center transition-colors flex items-center justify-center gap-1 ${
+                        scope === 'selection'
+                          ? 'bg-white shadow-2xs text-[#1e232a]'
+                          : 'text-[#6e685f] hover:text-[#1e232a]'
+                      }`}
+                    >
+                      <MousePointer className="w-3 h-3 text-amber-700" />
+                      <span>Selection</span>
+                      {selectedText && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScope('section')}
+                      className={`py-1.5 px-2 rounded-md font-semibold text-center transition-colors ${
+                        scope === 'section'
+                          ? 'bg-white shadow-2xs text-[#1e232a]'
+                          : 'text-[#6e685f] hover:text-[#1e232a]'
+                      }`}
+                    >
+                      Section
+                    </button>
+                  </div>
+
+                  {scope === 'selection' && (
+                    <div className="mt-1.5 p-2 bg-amber-50/80 border border-amber-200/80 rounded-md text-[11px] text-amber-900">
+                      {selectedText ? (
+                        <span className="line-clamp-2 italic">
+                          &ldquo;{selectedText}&rdquo; ({selectedText.split(/\s+/).filter(Boolean).length} words selected)
+                        </span>
+                      ) : (
+                        <span className="text-amber-800">
+                          No text currently selected in the editor. Highlight text or switch to Entire Document.
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {scope === 'section' && project.outline && project.outline.length > 0 && (
+                    <div className="mt-1.5">
+                      <select
+                        value={selectedSectionId}
+                        onChange={(e) => setSelectedSectionId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-md border border-[#dcd6ca] bg-[#faf9f6] text-xs text-[#1e232a]"
+                      >
+                        {project.outline.map((item, idx) => (
+                          <option key={item.id} value={item.id}>
+                            {idx + 1}. {item.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   )}
                 </div>
-              )}
 
-              {scope === 'section' && project.outline && project.outline.length > 0 && (
-                <div className="mt-1.5">
-                  <select
-                    value={selectedSectionId}
-                    onChange={(e) => setSelectedSectionId(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-md border border-[#dcd6ca] bg-[#faf9f6] text-xs text-[#1e232a]"
-                  >
-                    {project.outline.map((item, idx) => (
-                      <option key={item.id} value={item.id}>
-                        {idx + 1}. {item.title}
-                      </option>
+                {/* Focus Mode Selector */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-[#736c61] mb-1.5">
+                    Review Focus / Mode
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                    {[
+                      { id: 'full', label: 'Full Review' },
+                      { id: 'overall', label: 'Overall Editorial' },
+                      { id: 'ai_language', label: 'AI Language' },
+                      { id: 'repetition', label: 'Repetition' },
+                      { id: 'clarity_flow', label: 'Clarity & Flow' },
+                      { id: 'style', label: 'Style & Voice' },
+                      { id: 'rules', label: 'Hard Rules' },
+                      { id: 'unsupported_claims', label: 'Factual Claims' },
+                      { id: 'seo', label: 'SEO & Intent' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setMode(m.id as ReviewMode)}
+                        className={`px-2 py-1.5 rounded-md border text-[11px] font-medium text-left transition-colors truncate ${
+                          mode === m.id
+                            ? 'bg-[#1e232a] text-white border-[#1e232a] shadow-2xs font-semibold'
+                            : 'bg-[#faf9f6] text-[#4a443b] border-[#dcd6ca] hover:bg-[#f2eee5]'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* Focus Mode Selector */}
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-[#736c61] mb-1.5">
-                Review Focus / Mode
-              </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                {[
-                  { id: 'full', label: 'Full Review' },
-                  { id: 'overall', label: 'Overall Editorial' },
-                  { id: 'ai_language', label: 'AI Language' },
-                  { id: 'repetition', label: 'Repetition' },
-                  { id: 'clarity_flow', label: 'Clarity & Flow' },
-                  { id: 'style', label: 'Style & Voice' },
-                  { id: 'rules', label: 'Hard Rules' },
-                  { id: 'unsupported_claims', label: 'Factual Claims' },
-                  { id: 'seo', label: 'SEO & Intent' },
-                ].map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setMode(m.id as ReviewMode)}
-                    className={`px-2 py-1.5 rounded-md border text-[11px] font-medium text-left transition-colors truncate ${
-                      mode === m.id
-                        ? 'bg-[#1e232a] text-white border-[#1e232a] shadow-2xs font-semibold'
-                        : 'bg-[#faf9f6] text-[#4a443b] border-[#dcd6ca] hover:bg-[#f2eee5]'
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
+                {/* Model Selection Panel */}
+                <div className="flex items-center justify-between gap-2 p-2 bg-[#faf9f6] border border-[#e5dfd3] rounded-lg text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-indigo-700" />
+                    <span className="text-[11px] font-semibold text-[#5c5447]">AI Model:</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={reviewModelOverride || ''}
+                      onChange={(e) => setReviewModelOverride((e.target.value as ModelId) || undefined)}
+                      className="text-xs font-semibold px-2 py-1 bg-white border border-[#dcd6ca] rounded-md text-[#1e232a] focus:outline-hidden cursor-pointer"
+                    >
+                      <option value="">
+                        Default ({getModelDefinition(project.modelOverride || storage.getGlobalModel()).displayName})
+                      </option>
+                      {ALL_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Model Selection Panel */}
-            <div className="flex items-center justify-between gap-2 p-2 bg-[#faf9f6] border border-[#e5dfd3] rounded-lg text-xs">
-              <div className="flex items-center gap-1.5">
-                <Cpu className="w-3.5 h-3.5 text-indigo-700" />
-                <span className="text-[11px] font-semibold text-[#5c5447]">AI Model:</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-amber-800 font-medium hidden sm:inline">
-                  Rec: Gemini 3.8 Flash
-                </span>
-                <select
-                  value={reviewModelOverride || ''}
-                  onChange={(e) => setReviewModelOverride((e.target.value as ModelId) || undefined)}
-                  className="text-xs font-semibold px-2 py-1 bg-white border border-[#dcd6ca] rounded-md text-[#1e232a] focus:outline-hidden cursor-pointer"
-                >
-                  <option value="">
-                    Project Default ({getModelDefinition(project.modelOverride || storage.getGlobalModel()).displayName})
-                  </option>
-                  {ALL_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.displayName} {m.id === 'gemini-3.8-flash' ? '(Recommended)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Run Review Trigger Button */}
+            {/* Run Review Trigger Button (Always visible and easily accessible) */}
             <div className="pt-1">
               <button
                 type="button"
                 disabled={isReviewLoading || (scope === 'selection' && !selectedText)}
                 onClick={handleRunReview}
-                className="w-full py-2.5 px-4 bg-[#1e232a] hover:bg-[#2d3440] text-white font-semibold rounded-lg shadow-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50 select-none"
+                className="w-full py-2.5 px-4 bg-[#1e232a] hover:bg-[#2d3440] text-white font-semibold rounded-lg shadow-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50 select-none cursor-pointer"
               >
                 {isReviewLoading ? (
                   <>
@@ -710,10 +738,11 @@ export const EditorialIntelligenceDrawer: React.FC<EditorialIntelligenceDrawerPr
                 )}
               </button>
             </div>
+          </div>
 
             {/* Review Error Display */}
             {reviewError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-950 rounded-lg text-xs space-y-2">
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-950 rounded-lg text-xs space-y-2 mt-2 mx-4">
                 <div className="flex items-start gap-1.5">
                   <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   <div>
@@ -741,7 +770,6 @@ export const EditorialIntelligenceDrawer: React.FC<EditorialIntelligenceDrawerPr
                 </div>
               </div>
             )}
-          </div>
 
           {/* RESULTS CONTENT PANEL */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">

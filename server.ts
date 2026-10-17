@@ -2937,6 +2937,18 @@ OUTPUT SCHEMA (STRICTLY VALID JSON):
   "internalLinkOpportunities": [
     "Cross-referencing opportunity topic or guide"
   ],
+  "references": [
+    {
+      "studyId": "matching study ID if from attached studies",
+      "title": "Study title",
+      "authors": ["Author Names"],
+      "publication": "Journal or publisher",
+      "publicationYear": "Year",
+      "doiOrUrl": "DOI or URL",
+      "isVerifiedMatch": true,
+      "verificationNote": "Verified against Research Library study record"
+    }
+  ],
   "styleConsiderations": "Voice and tone guidance for this piece"
 }`;
 
@@ -3039,6 +3051,25 @@ OUTPUT SCHEMA (STRICTLY VALID JSON):
             factualContext: Array.isArray(parsed.factualContext) ? parsed.factualContext : [],
             editorialInterpretation: Array.isArray(parsed.editorialInterpretation) ? parsed.editorialInterpretation : [],
             internalLinkOpportunities: Array.isArray(parsed.internalLinkOpportunities) ? parsed.internalLinkOpportunities : [],
+            references: Array.isArray(parsed.references) ? parsed.references.map((r: any) => ({
+              studyId: r.studyId || '',
+              title: String(r.title || 'Untitled Source').trim(),
+              authors: Array.isArray(r.authors) ? r.authors : [r.authors || 'Authors'],
+              publication: String(r.publication || '').trim(),
+              publicationYear: String(r.publicationYear || '').trim(),
+              doiOrUrl: String(r.doiOrUrl || '').trim(),
+              isVerifiedMatch: typeof r.isVerifiedMatch === 'boolean' ? r.isVerifiedMatch : false,
+              verificationNote: String(r.verificationNote || (r.isVerifiedMatch ? 'Verified Library Source' : 'Unverified Citation - Please review')).trim(),
+            })) : attachedStudies.map((s: any) => ({
+              studyId: s.id,
+              title: s.title,
+              authors: Array.isArray(s.authors) ? s.authors : [s.authors || 'Researchers'],
+              publication: s.publication || s.sourceOrPublisher || '',
+              publicationYear: s.publicationYear || '',
+              doiOrUrl: s.doi || s.sourceUrl || '',
+              isVerifiedMatch: true,
+              verificationNote: 'Verified Library Source',
+            })),
             styleConsiderations: String(parsed.styleConsiderations || '').trim(),
             generatedAt: now,
             updatedAt: now,
@@ -3091,6 +3122,16 @@ OUTPUT SCHEMA (STRICTLY VALID JSON):
         'Recipient gratitude deepens when an object respects their taste rather than advertising its price tag.',
       ],
       internalLinkOpportunities: internalLinks.slice(0, 3).map((l: any) => `Connect thematic discussion to ${l.title} (${l.url})`),
+      references: attachedStudies.map((s: any) => ({
+        studyId: s.id,
+        title: s.title,
+        authors: Array.isArray(s.authors) ? s.authors : [s.authors || 'Researchers'],
+        publication: s.publication || s.sourceOrPublisher || '',
+        publicationYear: s.publicationYear || '',
+        doiOrUrl: s.doi || s.sourceUrl || '',
+        isVerifiedMatch: true,
+        verificationNote: 'Verified Library Source',
+      })),
       styleConsiderations: 'Civilized, literary, discerning. Avoid breathless enthusiasm or buzzwords.',
       generatedAt: now,
       updatedAt: now,
