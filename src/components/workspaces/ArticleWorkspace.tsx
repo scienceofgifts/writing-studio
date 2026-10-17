@@ -45,6 +45,10 @@ import {
   Sliders,
   Compass,
   ListOrdered,
+  Link2,
+  Scale,
+  ClipboardCheck,
+  History,
 } from 'lucide-react';
 
 interface ArticleWorkspaceProps {
@@ -345,10 +349,11 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
                 <div
                   className={`absolute ${
                     actionsMenuPosition === 'right' ? 'right-0' : 'left-0'
-                  } mt-1.5 w-60 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto`}
+                  } mt-1.5 w-64 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto`}
                 >
-                  <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] border-b border-[#f0ede6] mb-1">
-                    Studio & Research Tools
+                  {/* Section 1: Writing & Workflow */}
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] bg-[#f7f5ef] border-y border-[#ede7db] my-1">
+                    Writing & Workflow
                   </div>
 
                   <button
@@ -412,15 +417,103 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
                     type="button"
                     onClick={() => {
                       setIsActionsMenuOpen(false);
+                      onTogglePanel?.('links');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Link2 className="w-4 h-4 text-blue-800 shrink-0" />
+                      <span className="font-semibold">Internal Linking Studio</span>
+                    </div>
+                    {project.linkOpportunities && project.linkOpportunities.filter((o) => o.status === 'pending').length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-blue-100 text-blue-900">
+                        {project.linkOpportunities.filter((o) => o.status === 'pending').length} new
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      onTogglePanel?.('citations');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-amber-900 shrink-0" />
+                      <span className="font-semibold">Citation Studio</span>
+                    </div>
+                    {project.citationRecommendations && project.citationRecommendations.filter((r) => r.status === 'pending').length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-100 text-amber-950">
+                        {project.citationRecommendations.filter((r) => r.status === 'pending').length} new
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Section 2: Controls & Research */}
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] bg-[#f7f5ef] border-y border-[#ede7db] my-1">
+                    Controls & Research
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
                       setIsInfoDrawerOpen(true);
                     }}
                     className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center gap-2 text-[#1e232a] cursor-pointer"
                   >
                     <Sliders className="w-4 h-4 text-amber-800 shrink-0" />
                     <div>
-                      <div className="font-semibold">Article Info</div>
+                      <div className="font-semibold">Article Info & Brief</div>
                       <div className="text-[10px] text-[#736c61]">SEO, metadata & author</div>
                     </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      onTogglePanel?.('controls');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span className="font-semibold">Writing Controls</span>
+                    </div>
+                    <span className="text-[10px] text-[#736c61]">Tone & style</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      onTogglePanel?.('rules');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-purple-700 shrink-0" />
+                      <span className="font-semibold">Content Rules</span>
+                    </div>
+                    <span className="text-[10px] text-[#736c61]">Hard constraints</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      onTogglePanel?.('instructions');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-amber-800 shrink-0" />
+                      <span className="font-semibold">Instructions</span>
+                    </div>
+                    <span className="text-[10px] text-[#736c61]">Draft notes</span>
                   </button>
 
                   <button
@@ -442,21 +535,65 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
                     )}
                   </button>
 
+                  {/* Section 3: Quality & History */}
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] bg-[#f7f5ef] border-y border-[#ede7db] my-1">
+                    Quality & History
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => {
                       setIsActionsMenuOpen(false);
-                      onTogglePanel?.('citations');
+                      onTogglePanel?.('review');
                     }}
                     className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
                   >
                     <div className="flex items-center gap-2">
-                      <BookOpen className="w-4 h-4 text-amber-900 shrink-0" />
-                      <span className="font-semibold">Citation Studio</span>
+                      <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span className="font-semibold">AI Editorial Review</span>
                     </div>
-                    {project.citationRecommendations && project.citationRecommendations.filter((r) => r.status === 'pending').length > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-100 text-amber-950">
-                        {project.citationRecommendations.filter((r) => r.status === 'pending').length} new
+                    {project.editorialReview &&
+                      project.editorialReview.findings.filter((f) => f.status === 'pending').length > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-100 text-amber-950">
+                          {project.editorialReview.findings.filter((f) => f.status === 'pending').length} issues
+                        </span>
+                      )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      onTogglePanel?.('qc');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ClipboardCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span className="font-semibold">Quality Control</span>
+                    </div>
+                    {project.qualityControl && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-emerald-100 text-emerald-900">
+                        {project.qualityControl.status}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      onTogglePanel?.('history');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <History className="w-4 h-4 text-indigo-700 shrink-0" />
+                      <span className="font-semibold">Version History</span>
+                    </div>
+                    {project.versionHistory && project.versionHistory.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-indigo-100 text-indigo-900">
+                        {project.versionHistory.length}
                       </span>
                     )}
                   </button>

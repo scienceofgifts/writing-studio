@@ -584,6 +584,63 @@ export const Navigation: React.FC<NavigationProps> = ({
                             type="button"
                             onClick={() => {
                               setIsPanelsMenuOpen(false);
+                              handlePanelToggle('brief');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'brief'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <Sliders className={`w-4 h-4 shrink-0 ${activePanel === 'brief' ? 'text-amber-300' : 'text-amber-800'}`} />
+                            <div>
+                              <div className="font-semibold">Project Brief</div>
+                              <div className={`text-[10px] ${activePanel === 'brief' ? 'text-amber-200' : 'text-[#736c61]'}`}>Goals & audience</div>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('links');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'links'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <Link2 className={`w-4 h-4 shrink-0 ${activePanel === 'links' ? 'text-blue-300' : 'text-blue-800'}`} />
+                            <div>
+                              <div className="font-semibold">Internal Links</div>
+                              <div className={`text-[10px] ${activePanel === 'links' ? 'text-blue-200' : 'text-[#736c61]'}`}>Linking studio</div>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('citations');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'citations'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <BookOpen className={`w-4 h-4 shrink-0 ${activePanel === 'citations' ? 'text-amber-300' : 'text-amber-900'}`} />
+                            <div>
+                              <div className="font-semibold">Citation Studio</div>
+                              <div className={`text-[10px] ${activePanel === 'citations' ? 'text-amber-200' : 'text-[#736c61]'}`}>In-text citations</div>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
                               handlePanelToggle('review');
                             }}
                             className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
