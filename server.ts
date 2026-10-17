@@ -1158,36 +1158,57 @@ app.post('/api/gemini/find-link-opportunities', async (req, res) => {
       });
     }
 
-    const systemInstruction = `You are the lead senior editor for "Science of Gifts", an acclaimed publication known for civilized, thoughtful prose on craft, permanent objects, and gift psychology.
+    const systemInstruction = `You are the lead senior editor and SEO linking strategist for "Science of Gifts", an acclaimed publication known for civilized, thoughtful prose on craft, permanent objects, gifting psychology, and heirloom tools.
 
 YOUR MISSION:
-Analyze the provided editorial text and identify 2 to 5 high-value opportunities to link to existing Science of Gifts articles from the provided Internal Link Library.
+Analyze the provided editorial text and identify 2 to 5 high-value internal linking opportunities from the provided Destination Library. The library contains both Editorial Articles and Commercial Pages (Shop Gift Guides, Category Collections, and Individual Products) from the Science of Gifts shop.
 
-MANDATORY EDITORIAL LINKING RULES:
-1. EDITORIAL RELEVANCE: Only suggest a link when the target article genuinely deepens the reader's understanding of the subject, material craft, or psychological premise discussed in that exact sentence.
-2. NO KEYWORD STUFFING: Never insert links merely because a superficial keyword matches.
-3. NATURAL ANCHOR TEXT: Anchor text must be a concise, natural phrase (2 to 6 words) that reads effortlessly within the sentence.
-   - Do NOT use unnatural anchor phrases like "click here", "read our article", or "learn more".
-   - Preferred anchors from the library are suggestions; adapt them if necessary to sound natural in the sentence.
-4. DUPLICATE PROTECTION: Do NOT recommend any URL that is listed in ALREADY USED URLS. A single article should normally appear at most once in a document.
-5. EXACT TARGET PASSAGE: "targetPassage" must be a real sentence or clause copied verbatim from the document so the editor can locate it. "suggestedAnchor" must be a substring of "targetPassage".
-6. RESTRAINT: Favor quality over quantity. If no genuine opportunities exist, return an empty array.
-7. EDITORIAL NOTES CONTEXT: Strictly adhere to the Editorial Notes provided for each library article. Recommend a link ONLY when the discussion matches the specific contextual relationship and relevance criteria described in the notes. Do NOT link when the notes indicate the link would be inappropriate, superficial, or redundant.
+EDITORIAL & COMMERCIAL LINKING CONSTITUTION:
+1. TOPICAL RELEVANCE & SEARCH INTENT:
+   - Editorial Articles ('article'): Deepen reader understanding of material craft, history, horology, or psychology. Ideal when the reader is in an informational, learning frame of mind.
+   - Shop Gift Guides ('shop_guide'): Curated gift collections (e.g., https://shop.scienceofgifts.com/pages/history-gifts/). Ideal when the reader is exploring gift ideas for a category, recipient, or occasion (e.g., an article discussing gifts for history teachers).
+   - Individual Product Pages ('product'): Direct links to specific shop items (e.g., https://shop.scienceofgifts.com/products/history-teacher-definition-mug, https://shop.scienceofgifts.com/products/viking-norse-mythology-hoodie). Recommend ONLY when the prose specifically discusses or describes that exact item or a direct product opportunity.
+2. DESTINATION SPECIFICITY:
+   - Prefer a broad gift guide over a specific product unless the exact product is explicitly relevant to the sentence.
+   - Do NOT force a product link onto general discussion. If an article discusses teacher gifting in general, link to the teacher gift guide; only link the mug when the passage discusses identity drinkware or mugs.
+3. READER USEFULNESS VS. ADVERTISEMENT:
+   - Every commercial recommendation must genuinely help the reader. It must never feel like an intrusive banner ad shoehorned into refined prose.
+   - RESTRAINT: Prefer useful, contextually relevant links over maximizing link counts. Do NOT automatically recommend a shop link for every article. If no suitable commercial destination exists, return NO commercial recommendation.
+4. NATURAL, SEO-CONSCIOUS ANCHOR TEXT:
+   - Anchor text must describe the destination while fitting seamlessly into the author's conversational flow (2 to 6 words).
+   - Examples of natural anchors:
+     * "gift for a history teacher" -> History gift guide
+     * "history teacher definition mug" -> Definition mug product
+     * "viking norse mythology hoodie" -> Viking hoodie product
+     * "tactile permanence of mechanical watches" -> Horology editorial article
+   - NEVER use generic anchors like "click here", "buy now", "check this link", or "shop our collection".
+   - Avoid keyword stuffing, awkward syntax, or repetitive exact matches.
+   - If the existing sentence cannot accommodate a natural anchor directly, explain the opportunity and provide a "minimalRevision" for human editorial review rather than silently rewriting the article.
+5. DUPLICATE PROTECTION:
+   - Never recommend any URL present in ALREADY USED URLS. A destination should appear at most once in an article.
+6. EXACT TARGET PASSAGE & PREVIEW:
+   - "targetPassage" must be an exact sentence or clause copied verbatim from the document so it can be located.
+   - "suggestedAnchor" must be a verbatim substring of "targetPassage".
+   - "previewText" should show the passage with the anchor indicated or hyperlinked.
 
 Return ONLY valid JSON matching this schema:
 {
   "opportunities": [
     {
-      "linkId": "Exact ID from the library",
-      "linkTitle": "Title of the target article",
-      "linkUrl": "URL of the target article",
-      "targetPassage": "Exact sentence or clause from the document where the link belongs",
-      "suggestedAnchor": "Exact words within targetPassage that should become the hyperlinked text",
-      "reason": "1-2 sentence editorial explanation of why this link enriches the reader experience",
-      "relevance": "high"
+      "linkId": "Exact ID from library",
+      "linkTitle": "Title of destination",
+      "linkUrl": "URL of destination",
+      "destinationType": "article" | "shop_guide" | "product" | "category" | "other",
+      "targetPassage": "Exact verbatim sentence or clause from draft",
+      "suggestedAnchor": "Exact words within targetPassage to become hyperlinked",
+      "reason": "1-2 sentence editorial explanation of reader usefulness",
+      "seoRationale": "1-2 sentence SEO explanation of search intent match and commercial value",
+      "previewText": "Preview of sentence with anchor inserted",
+      "minimalRevision": "Optional minimal phrasing revision if needed for natural flow",
+      "relevance": "high" | "medium"
     }
   ],
-  "rationale": "1-2 sentence overview of internal linking strategy for this draft"
+  "rationale": "1-2 sentence overview of linking strategy balancing editorial depth and commercial relevance"
 }`;
 
     let userPrompt = `PROJECT: "${projectTitle}" [Type: ${projectType}]
@@ -1195,16 +1216,16 @@ Return ONLY valid JSON matching this schema:
 ALREADY USED URLS (DO NOT DUPLICATE):
 ${alreadyUsedUrls && alreadyUsedUrls.length > 0 ? alreadyUsedUrls.map((u: string) => `- ${u}`).join('\n') : '[None yet]'}
 
-AVAILABLE SCIENCE OF GIFTS INTERNAL LINK LIBRARY:
+AVAILABLE DESTINATION LIBRARY (EDITORIAL ARTICLES & COMMERCIAL SHOP PAGES):
 ${availableLinks
   .map(
     (l: any, idx: number) =>
-      `${idx + 1}. [ID: ${l.id}] "${l.title}"
+      `${idx + 1}. [ID: ${l.id}] "${l.title}" [Type: ${l.destinationType || 'article'}]
    - URL: ${l.url}
    - Topic: ${l.topic}
    - Description: ${l.description}
    ${l.preferredAnchor ? `- Preferred Anchor: "${l.preferredAnchor}"` : ''}
-   ${l.notes ? `- Editorial Notes: "${l.notes}"` : ''}`
+   ${l.notes ? `- Editorial & Commercial Notes: "${l.notes}"` : ''}`
   )
   .join('\n\n')}
 
@@ -1213,9 +1234,9 @@ CURRENT DOCUMENT CONTENT:
 ${documentContent}
 """
 
-Identify the most editorially valuable internal linking opportunities now.`;
+Evaluate this draft now. Recommend 1 to 4 editorially and commercially valuable links that genuinely help the reader.`;
 
-    const modelToUse = resolveServerModel(req.body.model || req.body.modelOverride, 'gemini-3.6-flash');
+    const modelToUse = resolveServerModel(req.body.model || req.body.modelOverride, 'gemini-3.8-flash');
 
     if (ai) {
       try {
@@ -1225,7 +1246,7 @@ Identify the most editorially valuable internal linking opportunities now.`;
           config: {
             systemInstruction,
             responseMimeType: 'application/json',
-            temperature: 0.4,
+            temperature: 0.3,
           },
         });
 
@@ -1234,22 +1255,30 @@ Identify the most editorially valuable internal linking opportunities now.`;
           try {
             const parsed = JSON.parse(text);
             const rawOpp = Array.isArray(parsed.opportunities) ? parsed.opportunities : [];
-            const sanitized = rawOpp.map((o: any, idx: number) => ({
-              id: `opp-${Date.now()}-${idx}`,
-              linkId: o.linkId,
-              linkTitle: o.linkTitle,
-              linkUrl: o.linkUrl,
-              targetPassage: o.targetPassage,
-              suggestedAnchor: o.suggestedAnchor,
-              reason: o.reason || 'Contextual reference to related Science of Gifts publication.',
-              relevance: o.relevance || 'high',
-              status: 'pending',
-            }));
+            const sanitized = rawOpp.map((o: any, idx: number) => {
+              const matchedLink = availableLinks.find((l: any) => l.id === o.linkId || l.url === o.linkUrl);
+              const destType = o.destinationType || matchedLink?.destinationType || 'article';
+              return {
+                id: `opp-${Date.now()}-${idx}`,
+                linkId: o.linkId || matchedLink?.id || `link-${idx}`,
+                linkTitle: o.linkTitle || matchedLink?.title || 'Science of Gifts Destination',
+                linkUrl: o.linkUrl || matchedLink?.url || '',
+                destinationType: destType,
+                targetPassage: o.targetPassage || '',
+                suggestedAnchor: o.suggestedAnchor || '',
+                reason: o.reason || 'Contextual reference providing value to the reader.',
+                seoRationale: o.seoRationale || `Matches ${destType === 'product' ? 'transactional product inquiry' : destType === 'shop_guide' ? 'commercial gift exploration' : 'informational research'} search intent.`,
+                previewText: o.previewText || (o.targetPassage && o.suggestedAnchor ? o.targetPassage.replace(o.suggestedAnchor, `[${o.suggestedAnchor}]`) : undefined),
+                minimalRevision: o.minimalRevision || undefined,
+                relevance: o.relevance || 'high',
+                status: 'pending',
+              };
+            });
 
             return res.json({
               ok: true,
               opportunities: sanitized,
-              rationale: parsed.rationale || 'Editorial link opportunities identified based on topical relevance.',
+              rationale: parsed.rationale || 'Editorial and commercial link opportunities evaluated.',
               modelUsed: modelToUse,
               source: 'gemini',
             });
@@ -1262,7 +1291,7 @@ Identify the most editorially valuable internal linking opportunities now.`;
       }
     }
 
-    // High quality editorial fallback scanner
+    // High quality editorial and commercial fallback scanner
     const fallbackOpportunities: any[] = [];
     const plainText = documentContent.replace(/<[^>]+>/g, ' ');
 
@@ -1291,14 +1320,24 @@ Identify the most editorially valuable internal linking opportunities now.`;
           const actualAnchor = plainText.substring(kwIndex, kwIndex + kw.length);
 
           if (passage && actualAnchor) {
+            const destType = link.destinationType || 'article';
+            const isCommercial = destType === 'shop_guide' || destType === 'product';
+
             fallbackOpportunities.push({
               id: `opp-fb-${Date.now()}-${idx}`,
               linkId: link.id,
               linkTitle: link.title,
               linkUrl: link.url,
+              destinationType: destType,
               targetPassage: passage,
               suggestedAnchor: actualAnchor,
-              reason: `Provides relevant context regarding "${link.topic || link.title}".`,
+              reason: isCommercial
+                ? `Connects reader interest in "${actualAnchor}" directly to curated Science of Gifts shop offering.`
+                : `Deepens understanding of "${link.topic || link.title}" for interested readers.`,
+              seoRationale: isCommercial
+                ? `Captures high-intent reader looking for authentic ${link.topic || 'gift items'} without intruding on prose tone.`
+                : `Strengthens topical authority and internal link equity for ${link.title}.`,
+              previewText: passage.replace(actualAnchor, `[${actualAnchor}]`),
               relevance: 'high',
               status: 'pending',
             });
@@ -1310,9 +1349,9 @@ Identify the most editorially valuable internal linking opportunities now.`;
 
     return res.json({
       ok: true,
-      opportunities: fallbackOpportunities.slice(0, 4),
+      opportunities: fallbackOpportunities.slice(0, 5),
       rationale: fallbackOpportunities.length > 0
-        ? 'Contextual link suggestions identified based on topic references.'
+        ? 'Contextual editorial and commercial links identified from active library.'
         : 'No unlinked topic references found in this draft.',
       source: 'editorial_scanner',
     });

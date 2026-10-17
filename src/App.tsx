@@ -41,7 +41,7 @@ import { LinkOpportunity } from './types/internalLink';
 import { ReviewFinding, EditorialReviewResult, QCResult, QCFinding } from './types/project';
 import { createVersionSnapshot } from './services/versionHistoryService';
 import { ensureSemanticHtml } from './utils/richText';
-import { applyHyperlinkToHtml } from './utils/urlUtils';
+import { applyHyperlinkToHtml, isValidUrl, isUrlAlreadyInDocument } from './utils/urlUtils';
 import { applyTheme } from './theme/tokens';
 import { useDocumentSearch } from './utils/useDocumentSearch';
 import { IdeaGeneratorView } from './components/IdeaGeneratorView';
@@ -430,16 +430,42 @@ export default function App() {
   // Internal link opportunity acceptance
   const handleAcceptLinkOpportunity = (opp: LinkOpportunity) => {
     if (!activeProject) return;
-    const historyWithCheckpoint = createVersionSnapshot(activeProject, 'before_ai_edit', {
-      label: `Link: ${opp.linkTitle}`,
-    });
 
+    // 1. Validate destination URL
+    if (!isValidUrl(opp.linkUrl)) {
+      toast.error('Invalid URL', `Destination URL "${opp.linkUrl}" is invalid.`);
+      return;
+    }
+
+    // 2. Check duplicate protection before insertion
+    if (isUrlAlreadyInDocument(opp.linkUrl, activeProject.content)) {
+      toast.error(
+        'Duplicate Link Prevented',
+        `Destination "${opp.linkTitle}" (${opp.linkUrl}) is already linked in this article.`
+      );
+      return;
+    }
+
+    // 3. Apply hyperlink insertion
     const res = applyHyperlinkToHtml(
       activeProject.content,
       opp.suggestedAnchor,
       opp.linkUrl,
       opp.targetPassage
     );
+
+    // 4. Confirm actual document contains the intended hyperlink and destination
+    if (!res.applied || !isUrlAlreadyInDocument(opp.linkUrl, res.updatedHtml)) {
+      toast.error(
+        'Insertion Not Applied',
+        `Could not locate the passage or anchor "${opp.suggestedAnchor}" in the current draft. Please verify the draft text.`
+      );
+      return;
+    }
+
+    const historyWithCheckpoint = createVersionSnapshot(activeProject, 'before_ai_edit', {
+      label: `Link: ${opp.linkTitle}`,
+    });
 
     const updatedOpportunities = (activeProject.linkOpportunities || []).map((o) =>
       o.id === opp.id ? { ...o, status: 'accepted' as const } : o
@@ -451,28 +477,55 @@ export default function App() {
       linkOpportunities: updatedOpportunities,
       versionHistory: historyWithCheckpoint,
     });
-    toast.success('Internal Link Inserted', `Linked "${opp.suggestedAnchor}".`);
+    toast.success('Internal Link Inserted', `Linked "${opp.suggestedAnchor}" to ${opp.linkTitle}.`);
   };
 
   const handleAcceptAllLinkOpportunities = (opps: LinkOpportunity[]) => {
-    if (!activeProject) return;
-    const historyWithCheckpoint = createVersionSnapshot(activeProject, 'before_ai_edit', {
-      label: `Bulk Inserted ${opps.length} Internal Links`,
-    });
+    if (!activeProject || opps.length === 0) return;
 
     let currentHtml = activeProject.content;
+    const insertedIds: string[] = [];
+    const skippedItems: string[] = [];
+
     opps.forEach((opp) => {
+      if (!isValidUrl(opp.linkUrl)) {
+        skippedItems.push(`Invalid URL: ${opp.linkTitle}`);
+        return;
+      }
+      if (isUrlAlreadyInDocument(opp.linkUrl, currentHtml)) {
+        skippedItems.push(`Already linked: ${opp.linkTitle}`);
+        return;
+      }
+
       const res = applyHyperlinkToHtml(
         currentHtml,
         opp.suggestedAnchor,
         opp.linkUrl,
         opp.targetPassage
       );
-      currentHtml = res.updatedHtml;
+
+      if (res.applied && isUrlAlreadyInDocument(opp.linkUrl, res.updatedHtml)) {
+        currentHtml = res.updatedHtml;
+        insertedIds.push(opp.id);
+      } else {
+        skippedItems.push(`Passage not matched: ${opp.suggestedAnchor}`);
+      }
+    });
+
+    if (insertedIds.length === 0) {
+      toast.error(
+        'Insertion Failed',
+        skippedItems.length > 0 ? skippedItems.join('; ') : 'Could not insert recommendations.'
+      );
+      return;
+    }
+
+    const historyWithCheckpoint = createVersionSnapshot(activeProject, 'before_ai_edit', {
+      label: `Bulk Inserted ${insertedIds.length} Internal Links`,
     });
 
     const updatedOpportunities = (activeProject.linkOpportunities || []).map((o) =>
-      opps.some((target) => target.id === o.id) ? { ...o, status: 'accepted' as const } : o
+      insertedIds.includes(o.id) ? { ...o, status: 'accepted' as const } : o
     );
 
     handleUpdateActiveProject({
@@ -481,7 +534,15 @@ export default function App() {
       linkOpportunities: updatedOpportunities,
       versionHistory: historyWithCheckpoint,
     });
-    toast.success('Internal Links Inserted', `Applied ${opps.length} link opportunities.`);
+
+    if (insertedIds.length === opps.length) {
+      toast.success('Internal Links Inserted', `Applied ${insertedIds.length} link opportunities.`);
+    } else {
+      toast.warning(
+        'Partial Insertion',
+        `Applied ${insertedIds.length} of ${opps.length} links. (${skippedItems.length} skipped)`
+      );
+    }
   };
 
   const handleRejectLinkOpportunity = (oppId: string) => {

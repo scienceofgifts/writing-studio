@@ -8,6 +8,7 @@ import net from 'net';
 import { GoogleGenAI } from '@google/genai';
 import { FetchedLinkMetadata } from '../types/internalLink';
 import { FetchedProductMetadata } from '../types/giftGuide';
+import { inferDestinationType } from '../utils/urlUtils';
 
 // Forbidden local / internal top-level or sub-domains
 const FORBIDDEN_HOST_PATTERNS = [
@@ -574,11 +575,15 @@ export function extractMetadataFromHtml(
     notes = `Editorial piece by ${author} on ${topic}.`;
   }
 
+  const targetUrl = canonicalUrl || requestedUrl;
+  const destinationType = inferDestinationType(targetUrl, metaMap.get('og:type') || title);
+
   return {
     title: title || undefined,
     description: description || undefined,
     topic: topic || undefined,
     category: matchedCat || undefined,
+    destinationType,
     preferredAnchor: preferredAnchor || undefined,
     notes: notes || undefined,
     canonicalUrl: canonicalUrl || undefined,

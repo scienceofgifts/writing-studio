@@ -204,3 +204,76 @@ export function applyHyperlinkToHtml(
 function escapeRegex(string: string): string {
   return string.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
 }
+
+/**
+ * Automatically infers the destination type based on URL pattern and title
+ */
+export function inferDestinationType(
+  url: string,
+  titleOrType?: string
+): 'article' | 'shop_guide' | 'product' | 'category' | 'other' {
+  if (!url) return 'article';
+  const cleanUrl = url.toLowerCase().trim();
+
+  // If explicit og:type passed
+  if (titleOrType === 'product') return 'product';
+  if (titleOrType === 'article') return 'article';
+
+  // Check URL path structures
+  if (cleanUrl.includes('/products/')) {
+    return 'product';
+  }
+  if (cleanUrl.includes('/collections/') || cleanUrl.includes('/pages/')) {
+    return 'shop_guide';
+  }
+  if (cleanUrl.includes('/categories/') || cleanUrl.includes('/category/')) {
+    return 'category';
+  }
+  if (cleanUrl.includes('shop.scienceofgifts.com')) {
+    // If shop domain without /products/, likely a guide or category
+    return 'shop_guide';
+  }
+
+  // Check title cues
+  if (titleOrType) {
+    const t = titleOrType.toLowerCase();
+    if (t.includes('gift guide') || t.includes('gifts for') || t.includes('collection')) {
+      return 'shop_guide';
+    }
+    if (
+      t.includes('hoodie') ||
+      t.includes('mug') ||
+      t.includes('compass') ||
+      t.includes('print') ||
+      t.includes('magnifier') ||
+      t.includes('bag') ||
+      t.includes('watch')
+    ) {
+      return 'product';
+    }
+  }
+
+  return 'article';
+}
+
+/**
+ * Returns human-friendly label for destination types
+ */
+export function formatDestinationType(
+  type?: 'article' | 'shop_guide' | 'product' | 'category' | 'other'
+): string {
+  switch (type) {
+    case 'shop_guide':
+      return 'Shop Guide';
+    case 'product':
+      return 'Product';
+    case 'category':
+      return 'Category';
+    case 'other':
+      return 'Resource';
+    case 'article':
+    default:
+      return 'Editorial Article';
+  }
+}
+

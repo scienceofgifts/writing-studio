@@ -6,11 +6,12 @@
  */
 
 import React, { useState } from 'react';
-import { InternalLink } from '../../types/internalLink';
+import { InternalLink, LinkDestinationType } from '../../types/internalLink';
 import {
   isValidUrl,
   hasTrackingParameters,
   cleanTrackingParameters,
+  inferDestinationType,
 } from '../../utils/urlUtils';
 import { fetchLinkMetadata } from '../../services/linkMetadataService';
 import {
@@ -48,6 +49,9 @@ export const LinkModal: React.FC<LinkModalProps> = ({
   const [preferredAnchor, setPreferredAnchor] = useState(link?.preferredAnchor || '');
   const [notes, setNotes] = useState(link?.notes || '');
   const [category, setCategory] = useState(link?.category || categories[0] || 'General');
+  const [destinationType, setDestinationType] = useState<LinkDestinationType>(
+    link?.destinationType || inferDestinationType(link?.url || '')
+  );
   const [active, setActive] = useState(link?.active !== undefined ? link.active : true);
 
   // Automatic metadata fetch state
@@ -181,6 +185,13 @@ export const LinkModal: React.FC<LinkModalProps> = ({
         }
       }
 
+      // Destination Type
+      if (meta.destinationType) {
+        setDestinationType(meta.destinationType);
+      } else {
+        setDestinationType(inferDestinationType(targetUrl, meta.title));
+      }
+
       // Canonical URL suggestion
       if (meta.canonicalUrl && meta.canonicalUrl.trim() !== targetUrl) {
         setCanonicalSuggestion(meta.canonicalUrl.trim());
@@ -302,6 +313,7 @@ export const LinkModal: React.FC<LinkModalProps> = ({
       preferredAnchor: preferredAnchor.trim() || undefined,
       notes: notes.trim() || undefined,
       category: category || 'General',
+      destinationType,
       active,
       createdAt: link?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -621,6 +633,27 @@ export const LinkModal: React.FC<LinkModalProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Destination Type */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5447] mb-1">
+                Destination Type *
+              </label>
+              <select
+                value={destinationType}
+                onChange={(e) => setDestinationType(e.target.value as LinkDestinationType)}
+                className="w-full px-3 py-2 text-xs bg-white border border-[#dcd6ca] rounded-lg text-[#1e232a] focus:outline-hidden focus:border-amber-600 shadow-2xs cursor-pointer font-medium"
+              >
+                <option value="article">Editorial Article (Informational craft, history & psychology)</option>
+                <option value="shop_guide">Shop Gift Guide (Curated collection / category page)</option>
+                <option value="product">Individual Product (Specific shop product page)</option>
+                <option value="category">Category Page</option>
+                <option value="other">Other Resource</option>
+              </select>
+              <p className="text-[11px] text-[#736c61] mt-1">
+                Specifies whether AI evaluates this destination for informational learning, broad gift exploration, or exact product consideration.
+              </p>
             </div>
 
             <div>

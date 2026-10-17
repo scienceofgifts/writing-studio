@@ -3,6 +3,8 @@
  * Editorial linking architecture to identify genuinely valuable linking opportunities.
  */
 
+export type LinkDestinationType = 'article' | 'shop_guide' | 'product' | 'category' | 'other';
+
 export interface InternalLink {
   id: string;
   title: string;
@@ -12,6 +14,7 @@ export interface InternalLink {
   preferredAnchor?: string;
   notes?: string;
   category: string;
+  destinationType?: LinkDestinationType;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -26,9 +29,13 @@ export interface LinkOpportunity {
   linkId: string;
   linkTitle: string;
   linkUrl: string;
+  destinationType?: LinkDestinationType;
   targetPassage: string; // The surrounding sentence or clause in the text
   suggestedAnchor: string; // The natural phrase within the passage to link
   reason: string; // Editorial justification for why this link helps the reader
+  seoRationale?: string; // SEO rationale / search intent match / commercial relevance
+  previewText?: string; // Preview of sentence with anchor inserted
+  minimalRevision?: string; // Optional suggested minimal revision for review
   relevance?: 'high' | 'medium';
   status: LinkOpportunityStatus;
 }
@@ -46,6 +53,7 @@ export interface FindLinkOpportunitiesRequest {
     preferredAnchor?: string;
     notes?: string;
     category: string;
+    destinationType?: LinkDestinationType;
   }[];
   alreadyUsedUrls: string[];
 }
@@ -62,6 +70,7 @@ export interface FetchedLinkMetadata {
   description?: string;
   topic?: string;
   category?: string;
+  destinationType?: LinkDestinationType;
   preferredAnchor?: string;
   notes?: string;
   canonicalUrl?: string;

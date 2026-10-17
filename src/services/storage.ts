@@ -17,6 +17,7 @@ import {
 } from '../types/project';
 import { StyleProfile } from '../types/styleReference';
 import { InternalLink } from '../types/internalLink';
+import { inferDestinationType } from '../utils/urlUtils';
 import {
   GiftGuideMetadata,
   DEFAULT_GIFT_GUIDE_METADATA,
@@ -562,6 +563,64 @@ const SEED_PROJECTS: WritingProject[] = [
       metaDescription: 'Handcrafted from 18oz Scottish waxed canvas and English bridle leather. An heirloom shoulder bag built for decades of daily utility.',
     },
     content: `<h1>The Marrow of Tradition: 18oz Waxed Canvas Field Bag</h1><p><strong>Crafted from dense 18-ounce paraffin canvas and hand-peened copper rivets, built to outlast trends and weather decades.</strong></p><p>Most modern bags arrive at their peak on the day you cut their tags off; from that moment forward, ballistic nylon pills and synthetic coatings steadily degrade. This field bag is built on the inverse principle. The 18-ounce Scottish duck canvas arrives stiff and unapologetic, but within weeks of carrying books, tools, and damp commutes, the paraffin wax creases into a marble-like patina unique to your stride.</p><p>Every stress point is bound by heavy 9-ounce bridle leather and hand-peened copper saddler rivets, the same unyielding fasteners used on cavalry harnesses. The brass teeth of the number ten zipper are sheltered under a generous storm flap, keeping notebooks dry when cloudbursts catch you without an umbrella. It is heavy, handsome, and entirely indifferent to fleeting trends.</p><h3>Specifications & Provenance</h3><ul><li><strong>Body:</strong> 18oz Scottish paraffin-waxed duck canvas</li><li><strong>Leather:</strong> 9oz Sedgwick vegetable-tanned English bridle leather</li><li><strong>Fasteners:</strong> Hand-peened solid copper saddlers rivets</li><li><strong>Hardware:</strong> Sand-cast solid brass buckle and snaps</li><li><strong>Capacity:</strong> Accommodates a 15-inch laptop, hardbound notebooks, and knitwear</li></ul>`
+  },
+  {
+    id: 'proj-seed-article-teacher',
+    type: 'article',
+    title: 'The Art of Thoughtful Teacher Appreciation',
+    createdAt: '2026-10-06T10:00:00.000Z',
+    updatedAt: '2026-10-06T16:00:00.000Z',
+    status: 'in_progress',
+    projectInstructions: 'Explore meaningful educator appreciation without relying on clichés. Maintain an observant, civilized tone.',
+    brief: {
+      ...DEFAULT_BRIEF,
+      purpose: 'Examine how to choose gifts for educators that respect their discipline and personal identity.',
+      keyPoints: [
+        'Moving beyond disposable gift cards and generic scented candles',
+        'Connecting gifts to what teachers enjoy outside the classroom',
+        'Useful desk objects that reflect personal or subject identity',
+      ],
+      thingsToAvoid: ['Plastic gimmicks', 'Apples for the teacher tropes', 'Generic retail filler'],
+    },
+    outline: [
+      { id: 't1', title: 'The Staff Room Cliché Dilemma' },
+      { id: 't2', title: 'Honoring the Academic Discipline' },
+      { id: 't3', title: 'Objects of Everyday Desk Utility' },
+      { id: 't4', title: 'Conclusion: Appreciation with Permanence' },
+    ],
+    contentRules: [...DEFAULT_CONTENT_RULES],
+    writingControls: { ...DEFAULT_WRITING_CONTROLS },
+    aiSettings: { ...DEFAULT_WRITING_CONTROLS },
+    content: `<h1>The Art of Thoughtful Teacher Appreciation</h1><p>Every June and December, school staff rooms become flooded with generic scented candles, supermarket chocolates, and disposable mugs that eventually end up at thrift shops. While the sentiment is well-intentioned, genuine gratitude for educators requires a little more discernment.</p><p>When picking a gift for a history teacher, think about what they enjoy outside the classroom, too. A thoughtful mentor spends evenings grading essays, reading monographs, and translating difficult primary sources for young minds.</p><p>Mugs don't make great gifts unless they reflect something the recipient identifies with, such as this history teacher definition mug. High-fire stoneware that sits beside stacks of paperbacks becomes a faithful companion through long grading sessions.</p><p>Rather than panic purchases, focus on enduring utility and respect for their academic passion.</p>`
+  },
+  {
+    id: 'proj-seed-article-viking',
+    type: 'article',
+    title: 'Norse Symbolism and the Modern Revival of Viking Heritage',
+    createdAt: '2026-10-07T09:00:00.000Z',
+    updatedAt: '2026-10-07T14:30:00.000Z',
+    status: 'in_progress',
+    projectInstructions: 'Examine Norse material culture, authentic knotwork, and why heritage symbols resonate in modern garments.',
+    brief: {
+      ...DEFAULT_BRIEF,
+      purpose: 'Explore the aesthetic and cultural appeal of authentic Norse symbols in modern craft.',
+      keyPoints: [
+        'Urnes and Borre styles in historical knotwork',
+        'Runic compasses and symbolic navigation',
+        'Substantial natural fabrics versus synthetic graphic wear',
+      ],
+      thingsToAvoid: ['Hollywood barbarian clichés', 'Viking horn helmets', 'Cheap polyester prints'],
+    },
+    outline: [
+      { id: 'v1', title: 'Beyond Hollywood Barbarians' },
+      { id: 'v2', title: 'The Geometry of Runic Motifs' },
+      { id: 'v3', title: 'Heritage Apparel with Substance' },
+      { id: 'v4', title: 'Conclusion: Living with Mythic Symbols' },
+    ],
+    contentRules: [...DEFAULT_CONTENT_RULES],
+    writingControls: { ...DEFAULT_WRITING_CONTROLS },
+    aiSettings: { ...DEFAULT_WRITING_CONTROLS },
+    content: `<h1>Norse Symbolism and the Modern Revival of Viking Heritage</h1><p>The contemporary fascination with Nordic history is rarely about marauding longships; it is about an appreciation for elemental craftsmanship, mythic storytelling, and symbols that endure across centuries.</p><p>From the intricate interwoven knotwork of the Urnes style to runic compasses found in post-medieval manuscripts, Norse motifs represent protection, navigation through adversity, and respect for natural forces.</p><p>For everyday wear that carries symbolic weight, many enthusiasts gravitate toward garments like a viking norse mythology hoodie featuring authentic knotwork. When rendered on heavy unbleached cotton rather than cheap synthetic blends, historic graphics feel grounded and substantial.</p><p>Whether examining hand-forged axes or wearing historic heraldry, honoring heritage requires attention to graphic authenticity and material longevity.</p>`
   }
 ];
 
@@ -571,7 +630,7 @@ export const storage = {
       const stored = localStorage.getItem(STORAGE_KEY_PROJECTS);
       if (stored) {
         const parsed: WritingProject[] = JSON.parse(stored);
-        return parsed.map((p) => {
+        const mapped: WritingProject[] = parsed.map((p): WritingProject => {
           const controls = p.writingControls || p.aiSettings || { ...DEFAULT_WRITING_CONTROLS };
           const normalizedControls: WritingControls = {
             ...DEFAULT_WRITING_CONTROLS,
@@ -636,15 +695,34 @@ export const storage = {
             articleMeta,
           };
         });
+
+        // Ensure new seed projects (e.g. teacher appreciation and viking articles) are available
+        const existingIds = new Set(mapped.map((p) => p.id));
+        let added = false;
+        for (const seed of SEED_PROJECTS) {
+          if (!existingIds.has(seed.id)) {
+            mapped.push({
+              ...seed,
+              writingControls: { ...DEFAULT_WRITING_CONTROLS, ...seed.aiSettings },
+              aiSettings: { ...DEFAULT_WRITING_CONTROLS, ...seed.aiSettings },
+            } as WritingProject);
+            added = true;
+          }
+        }
+        if (added) {
+          this.saveRawProjects(mapped);
+        }
+
+        return mapped;
       }
     } catch (e) {
       console.warn('Failed to read projects from localStorage:', e);
     }
-    const seeded = SEED_PROJECTS.map((p) => ({
+    const seeded: WritingProject[] = SEED_PROJECTS.map((p) => ({
       ...p,
       writingControls: { ...DEFAULT_WRITING_CONTROLS, ...p.aiSettings },
       aiSettings: { ...DEFAULT_WRITING_CONTROLS, ...p.aiSettings },
-    }));
+    }) as WritingProject);
     this.saveRawProjects(seeded);
     return seeded;
   },
@@ -1219,7 +1297,33 @@ export const storage = {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          const existingIds = new Set(parsed.map((l: any) => l.id));
+          const existingUrls = new Set(parsed.map((l: any) => l.url));
+          let changed = false;
+
+          const migrated = parsed.map((l: any) => {
+            if (!l.destinationType) {
+              changed = true;
+              return {
+                ...l,
+                destinationType: inferDestinationType(l.url, l.title),
+              };
+            }
+            return l;
+          });
+
+          // Merge any seed destinations not yet present
+          for (const seed of DEFAULT_SEED_INTERNAL_LINKS) {
+            if (!existingIds.has(seed.id) && !existingUrls.has(seed.url)) {
+              migrated.push(seed);
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            this.saveRawInternalLinks(migrated);
+          }
+          return migrated;
         }
       }
     } catch (e) {
@@ -2304,6 +2408,7 @@ export const DEFAULT_LINK_CATEGORIES: string[] = [
 ];
 
 export const DEFAULT_SEED_INTERNAL_LINKS: InternalLink[] = [
+  // --- Editorial Articles ---
   {
     id: 'link-sog-displayable-gifts',
     title: 'Why People Prefer Gifts They Can Display',
@@ -2313,6 +2418,7 @@ export const DEFAULT_SEED_INTERNAL_LINKS: InternalLink[] = [
     preferredAnchor: 'why people prefer gifts they can display',
     notes: 'Useful when discussing decorative objects, table accessories, or desktop tools.',
     category: 'Gift Psychology',
+    destinationType: 'article',
     active: true,
     createdAt: '2026-10-01T12:00:00.000Z',
     updatedAt: '2026-10-01T12:00:00.000Z',
@@ -2326,6 +2432,7 @@ export const DEFAULT_SEED_INTERNAL_LINKS: InternalLink[] = [
     preferredAnchor: 'tactile permanence of mechanical watches',
     notes: 'Relevant when discussing heirloom tools, analog machinery, and daily morning rituals.',
     category: 'Product & Craft Advice',
+    destinationType: 'article',
     active: true,
     createdAt: '2026-10-01T12:00:00.000Z',
     updatedAt: '2026-10-01T12:00:00.000Z',
@@ -2339,6 +2446,7 @@ export const DEFAULT_SEED_INTERNAL_LINKS: InternalLink[] = [
     preferredAnchor: 'patience of slow cookware',
     notes: 'Ideal when discussing durable kitchen utensils, carbonized seasoning, and heirloom tools.',
     category: 'Lifestyle & Rituals',
+    destinationType: 'article',
     active: true,
     createdAt: '2026-10-02T12:00:00.000Z',
     updatedAt: '2026-10-02T12:00:00.000Z',
@@ -2352,6 +2460,7 @@ export const DEFAULT_SEED_INTERNAL_LINKS: InternalLink[] = [
     preferredAnchor: 'objects that age gracefully',
     notes: 'Connects with discussions on raw brass, untreated cedar, heavy denim, and longevity.',
     category: 'Gift Advice',
+    destinationType: 'article',
     active: true,
     createdAt: '2026-10-02T12:00:00.000Z',
     updatedAt: '2026-10-02T12:00:00.000Z',
@@ -2365,6 +2474,7 @@ export const DEFAULT_SEED_INTERNAL_LINKS: InternalLink[] = [
     preferredAnchor: 'civilized ritual of gift giving',
     notes: 'Use when exploring gifting etiquette, intentionality, and avoiding panic purchases.',
     category: 'Gift Etiquette',
+    destinationType: 'article',
     active: true,
     createdAt: '2026-10-03T12:00:00.000Z',
     updatedAt: '2026-10-03T12:00:00.000Z',
@@ -2378,8 +2488,125 @@ export const DEFAULT_SEED_INTERNAL_LINKS: InternalLink[] = [
     preferredAnchor: 'vegetable-tanned bridle leather',
     notes: 'Essential for leather gift guides, wallets, belts, and bespoke cases.',
     category: 'Product & Craft Advice',
+    destinationType: 'article',
     active: true,
     createdAt: '2026-10-03T12:00:00.000Z',
     updatedAt: '2026-10-03T12:00:00.000Z',
+  },
+
+  // --- Shop Gift Guides & Collections ---
+  {
+    id: 'link-shop-history-gifts',
+    title: 'Thoughtful Gifts for History Buffs & Teachers',
+    url: 'https://shop.scienceofgifts.com/pages/history-gifts/',
+    topic: 'History gifts / history teachers / historical replicas & books',
+    description: 'Curated Science of Gifts shop collection featuring historical artifacts, museum-quality replicas, and scholarly desk gifts.',
+    preferredAnchor: 'gift for a history teacher',
+    notes: 'Commercial gift guide. Recommend when an editorial article discusses gifting for history buffs, educators, historians, or period enthusiasts.',
+    category: 'Gift Advice',
+    destinationType: 'shop_guide',
+    active: true,
+    createdAt: '2026-10-04T12:00:00.000Z',
+    updatedAt: '2026-10-04T12:00:00.000Z',
+  },
+  {
+    id: 'link-shop-teacher-gifts',
+    title: 'Educator & Teacher Appreciation Gift Guide',
+    url: 'https://shop.scienceofgifts.com/pages/teacher-gifts/',
+    topic: 'Teacher gifts / educator appreciation / classroom mentors',
+    description: 'Carefully chosen shop gift guide for schoolteachers, college professors, and academic mentors that avoids generic gift cards.',
+    preferredAnchor: 'gifts for teachers',
+    notes: 'Commercial gift guide. Recommend when articles explore teacher appreciation, mentoring, or end-of-year educator recognition.',
+    category: 'Gift Advice',
+    destinationType: 'shop_guide',
+    active: true,
+    createdAt: '2026-10-04T12:00:00.000Z',
+    updatedAt: '2026-10-04T12:00:00.000Z',
+  },
+  {
+    id: 'link-shop-cartography-guide',
+    title: 'Cartography & Map Lovers Gift Collection',
+    url: 'https://shop.scienceofgifts.com/collections/cartography-gifts',
+    topic: 'Cartography gifts / map lovers / vintage navigation tools',
+    description: 'Curated shop gift collection featuring letterpress elevation prints, solid brass pocket compasses, and archival cartographic instruments.',
+    preferredAnchor: 'gifts for map lovers',
+    notes: 'Commercial collection. Recommend when articles discuss maps, contour prints, topography, or navigation tools.',
+    category: 'Product & Craft Advice',
+    destinationType: 'shop_guide',
+    active: true,
+    createdAt: '2026-10-04T12:00:00.000Z',
+    updatedAt: '2026-10-04T12:00:00.000Z',
+  },
+
+  // --- Individual Products ---
+  {
+    id: 'link-shop-viking-hoodie',
+    title: 'Viking Norse Mythology Heavyweight Hoodie',
+    url: 'https://shop.scienceofgifts.com/products/viking-norse-mythology-hoodie',
+    topic: 'Viking apparel / Norse mythology / historical garments',
+    description: 'Heavyweight 450gsm organic cotton hoodie featuring authentic historical Norse knotwork, Vegvisir runic compass, and mythological motifs.',
+    preferredAnchor: 'viking norse mythology hoodie',
+    notes: 'Individual product page. Recommend when the article specifically mentions Viking apparel, Norse mythology gifts, or historical rune wear.',
+    category: 'Lifestyle & Rituals',
+    destinationType: 'product',
+    active: true,
+    createdAt: '2026-10-05T12:00:00.000Z',
+    updatedAt: '2026-10-05T12:00:00.000Z',
+  },
+  {
+    id: 'link-shop-teacher-mug',
+    title: 'History Teacher Definition Ceramic Mug',
+    url: 'https://shop.scienceofgifts.com/products/history-teacher-definition-mug',
+    topic: 'Teacher gifts / ceramic drinkware / history teacher identity',
+    description: 'High-fire 15oz ceramic mug printed with an authentic, witty historical educator definition and archival typography.',
+    preferredAnchor: 'history teacher definition mug',
+    notes: 'Individual product page. Recommend when prose specifically discusses identity mugs, history teacher desk accessories, or teacher drinkware.',
+    category: 'Lifestyle & Rituals',
+    destinationType: 'product',
+    active: true,
+    createdAt: '2026-10-05T12:00:00.000Z',
+    updatedAt: '2026-10-05T12:00:00.000Z',
+  },
+  {
+    id: 'link-shop-dalvey-compass',
+    title: 'Dalvey Voyager Brass Pocket Compass',
+    url: 'https://shop.scienceofgifts.com/products/dalvey-voyager-compass',
+    topic: 'Navigational instrument / Scottish brass / pocket compass',
+    description: 'Machined Scottish mirror-polished brass pocket instrument with liquid-damped jewel capsule and spring-loaded lid.',
+    preferredAnchor: 'Dalvey brass pocket compass',
+    notes: 'Individual product page. Connect with discussions of manual navigation, tactile pocket instruments, and heirloom brass tools.',
+    category: 'Product & Craft Advice',
+    destinationType: 'product',
+    active: true,
+    createdAt: '2026-10-05T12:00:00.000Z',
+    updatedAt: '2026-10-05T12:00:00.000Z',
+  },
+  {
+    id: 'link-shop-topographic-print',
+    title: 'Letterpress Topographic Ridge Elevation Print',
+    url: 'https://shop.scienceofgifts.com/products/topographic-letterpress-print',
+    topic: 'Wall art / relief print / contour topography',
+    description: 'Deep-debossed relief contour print on 600gsm Somerset heavy cotton rag paper, hand-pulled on a vintage cylinder press.',
+    preferredAnchor: 'letterpress topographic ridge print',
+    notes: 'Individual product page. Link when articles discuss tactile wall prints, physical contour lines, or tactile map art.',
+    category: 'Product & Craft Advice',
+    destinationType: 'product',
+    active: true,
+    createdAt: '2026-10-05T12:00:00.000Z',
+    updatedAt: '2026-10-05T12:00:00.000Z',
+  },
+  {
+    id: 'link-shop-desk-magnifier',
+    title: 'Solid Brass 3-Inch Desk Magnifier & Paperweight',
+    url: 'https://shop.scienceofgifts.com/products/brass-desk-magnifier',
+    topic: 'Desk tools / optical magnifier / turned brass',
+    description: 'Ground 4x crown-glass optical lens encased in a heavy turned unlacquered brass ring with beveled glide rim.',
+    preferredAnchor: 'solid brass desk magnifier',
+    notes: 'Individual product page. Suitable for articles discussing map inspection loupes, antiquarian reading tools, or weighted desk objects.',
+    category: 'Product & Craft Advice',
+    destinationType: 'product',
+    active: true,
+    createdAt: '2026-10-05T12:00:00.000Z',
+    updatedAt: '2026-10-05T12:00:00.000Z',
   },
 ];

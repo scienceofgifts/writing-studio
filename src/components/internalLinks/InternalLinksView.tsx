@@ -10,6 +10,7 @@ import { LinkModal } from './LinkModal';
 import {
   cleanTrackingParameters,
   hasTrackingParameters,
+  formatDestinationType,
 } from '../../utils/urlUtils';
 import {
   Link2,
@@ -43,6 +44,7 @@ export const InternalLinksView: React.FC<InternalLinksViewProps> = ({ onBackToSt
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [destinationTypeFilter, setDestinationTypeFilter] = useState<string>('all');
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -143,7 +145,11 @@ export const InternalLinksView: React.FC<InternalLinksViewProps> = ({ onBackToSt
       (statusFilter === 'active' && link.active) ||
       (statusFilter === 'inactive' && !link.active);
 
-    return matchesSearch && matchesCategory && matchesStatus;
+    const matchesType =
+      destinationTypeFilter === 'all' ||
+      (link.destinationType || 'article') === destinationTypeFilter;
+
+    return matchesSearch && matchesCategory && matchesStatus && matchesType;
   });
 
   const activeCount = links.filter((l) => l.active).length;
@@ -245,6 +251,19 @@ export const InternalLinksView: React.FC<InternalLinksViewProps> = ({ onBackToSt
                 <option value="all">All Statuses</option>
                 <option value="active">Active Only</option>
                 <option value="inactive">Inactive Only</option>
+              </select>
+
+              {/* Destination Type Filter */}
+              <select
+                value={destinationTypeFilter}
+                onChange={(e) => setDestinationTypeFilter(e.target.value)}
+                className="text-xs px-3 py-2 bg-[#faf9f6] border border-[#dcd6ca] rounded-lg text-[#1e232a] focus:outline-hidden cursor-pointer font-medium"
+              >
+                <option value="all">All Destination Types</option>
+                <option value="article">Editorial Articles</option>
+                <option value="shop_guide">Shop Gift Guides</option>
+                <option value="product">Individual Products</option>
+                <option value="category">Category Pages</option>
               </select>
 
               <button
@@ -367,11 +386,24 @@ export const InternalLinksView: React.FC<InternalLinksViewProps> = ({ onBackToSt
                   }`}
                 >
                   <div className="space-y-2.5">
-                    {/* Top Row: Category badge & Active Toggle */}
+                    {/* Top Row: Category & Destination Type badge & Active Toggle */}
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-semibold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                        {link.category}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-semibold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                          {link.category}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                            link.destinationType === 'product'
+                              ? 'text-purple-900 bg-purple-50 border-purple-200'
+                              : link.destinationType === 'shop_guide'
+                              ? 'text-amber-900 bg-amber-50 border-amber-200'
+                              : 'text-blue-900 bg-blue-50 border-blue-200'
+                          }`}
+                        >
+                          {formatDestinationType(link.destinationType || 'article')}
+                        </span>
+                      </div>
 
                       <div className="flex items-center gap-2">
                         <span className={`text-[10px] font-bold uppercase tracking-wider ${link.active ? 'text-emerald-700' : 'text-[#8a8275]'}`}>
