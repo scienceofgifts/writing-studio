@@ -50,6 +50,7 @@ import { DataBackupView } from './components/DataBackupView';
 import { ResearchLibraryView } from './components/research/ResearchLibraryView';
 import { ResearchStudyWorkspace } from './components/research/ResearchStudyWorkspace';
 import { ResearchDrawer } from './components/drawers/ResearchDrawer';
+import { CitationStudioDrawer } from './components/drawers/CitationStudioDrawer';
 
 export default function App() {
   const [projects, setProjects] = useState<WritingProject[]>(() => storage.getProjects());
@@ -1028,6 +1029,7 @@ export default function App() {
           onUpdateQC={handleUpdateQC}
           onRequestProposal={(prop) => setDiffProposal(prop)}
           onApplyFix={handleApplyQCFix}
+          onOpenCitationStudio={() => setActivePanel('citations')}
         />
       )}
 
@@ -1047,6 +1049,19 @@ export default function App() {
           onClose={handleClosePanel}
           project={activeProject}
           onUpdateProject={handleUpdateActiveProject}
+          onNavigateToResearchLibrary={() => setCurrentView('research')}
+          onOpenCitationStudio={() => setActivePanel('citations')}
+        />
+      )}
+
+      {/* Feature: Research Citation Studio Drawer */}
+      {currentView === 'workspace' && activeProject && activePanel === 'citations' && (
+        <CitationStudioDrawer
+          isOpen={true}
+          onClose={handleClosePanel}
+          project={activeProject}
+          onUpdateProject={handleUpdateActiveProject}
+          editorRef={editorRef}
           onNavigateToResearchLibrary={() => setCurrentView('research')}
         />
       )}

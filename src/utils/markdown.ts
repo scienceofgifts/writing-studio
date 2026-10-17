@@ -126,6 +126,12 @@ function convertInlineHtmlToMarkdown(html: string): string {
     return `\`${inner}\``;
   });
 
+  // Superscript citation tags (converts <sup ...>1</sup> to [1])
+  text = text.replace(/<sup\b[^>]*>([\s\S]*?)<\/sup>/gi, (_, inner) => {
+    const clean = inner.replace(/<[^>]+>/g, '').trim();
+    return clean ? `[${clean}]` : '';
+  });
+
   // Decode common HTML entities
   text = text
     .replace(/&nbsp;/g, ' ')

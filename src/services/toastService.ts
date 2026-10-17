@@ -32,6 +32,14 @@ class ToastManager {
   }
 
   public show(message: Omit<ToastMessage, 'id'>): string {
+    // Prevent duplicate identical toasts in active queue
+    const existing = this.toasts.find(
+      (t) => t.type === message.type && t.title === message.title && t.description === message.description
+    );
+    if (existing) {
+      return existing.id;
+    }
+
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const toast: ToastMessage = { ...message, id };
     

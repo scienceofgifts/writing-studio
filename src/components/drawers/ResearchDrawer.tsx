@@ -28,6 +28,7 @@ interface ResearchDrawerProps {
   project: WritingProject;
   onUpdateProject: (updated: WritingProject) => void;
   onNavigateToResearchLibrary?: () => void;
+  onOpenCitationStudio?: () => void;
 }
 
 export const ResearchDrawer: React.FC<ResearchDrawerProps> = ({
@@ -36,6 +37,7 @@ export const ResearchDrawer: React.FC<ResearchDrawerProps> = ({
   project,
   onUpdateProject,
   onNavigateToResearchLibrary,
+  onOpenCitationStudio,
 }) => {
   const [allStudies, setAllStudies] = useState<ResearchStudy[]>(() => storage.getResearchStudies());
   const [searchQuery, setSearchQuery] = useState('');
@@ -240,6 +242,34 @@ export const ResearchDrawer: React.FC<ResearchDrawerProps> = ({
             )}
           </button>
         </div>
+
+        {/* Feature: Research Citation Studio Action Banner */}
+        {onOpenCitationStudio && (
+          <div className="p-3.5 rounded-xl bg-[#faf8f4] border border-[#e2dcd0] space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#1e232a]">
+                <BookOpen className="w-3.5 h-3.5 text-amber-900" />
+                <span>Research Citation Studio</span>
+              </div>
+              {project.citationRecommendations && project.citationRecommendations.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-100 text-amber-950">
+                  {project.citationRecommendations.filter((r) => r.status === 'pending').length} available
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-[#5e5548] leading-relaxed">
+              Find empirical claims in your draft that can be verified with numbered in-text citations and automatic APA references.
+            </p>
+            <button
+              type="button"
+              onClick={onOpenCitationStudio}
+              className="w-full py-1.5 px-3 text-xs font-semibold bg-[#1e232a] hover:bg-[#2d3744] text-white rounded-lg shadow-2xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Open Citation Studio</span>
+            </button>
+          </div>
+        )}
 
         {/* Attached Studies Section */}
         <div className="space-y-3">

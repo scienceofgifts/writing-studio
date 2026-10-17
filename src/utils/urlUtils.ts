@@ -119,14 +119,20 @@ export function isUrlAlreadyInDocument(url: string, html: string): boolean {
  * Normalizes a URL for comparison (removes trailing slash and lowercases protocol/hostname)
  */
 export function normalizeUrlForComparison(url: string): string {
+  if (!url) return '';
   try {
-    const parsed = new URL(url.trim());
-    const pathname = parsed.pathname.endsWith('/') && parsed.pathname.length > 1
-      ? parsed.pathname.slice(0, -1)
-      : parsed.pathname;
-    return `${parsed.protocol}//${parsed.host}${pathname}${parsed.search}`;
+    const cleaned = cleanTrackingParameters(url);
+    const parsed = new URL(cleaned.trim());
+    const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const pathname =
+      parsed.pathname.endsWith('/') && parsed.pathname.length > 1
+        ? parsed.pathname.slice(0, -1)
+        : parsed.pathname;
+    return `${hostname}${pathname.toLowerCase()}${parsed.search.toLowerCase()}`;
   } catch {
-    return url.trim().replace(/\/+$/, '');
+    let clean = url.trim().toLowerCase();
+    clean = clean.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '');
+    return clean;
   }
 }
 

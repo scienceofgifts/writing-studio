@@ -11,8 +11,34 @@ import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
+import Superscript from '@tiptap/extension-superscript';
 import { storage } from '../services/storage';
 import { cleanTrackingParameters, hasTrackingParameters } from '../utils/urlUtils';
+
+const CustomSuperscript = Superscript.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      'data-study-id': {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-study-id'),
+        renderHTML: (attributes) => {
+          if (!attributes['data-study-id']) return {};
+          return { 'data-study-id': attributes['data-study-id'] };
+        },
+      },
+      class: {
+        default: 'citation-ref text-[11px] font-semibold text-amber-900 select-none cursor-pointer',
+        parseHTML: (element) => element.getAttribute('class') || 'citation-ref',
+        renderHTML: (attributes) => ({
+          class:
+            attributes.class ||
+            'citation-ref text-[11px] font-semibold text-amber-900 select-none cursor-pointer',
+        }),
+      },
+    };
+  },
+});
 import {
   Bold,
   Italic,
@@ -103,6 +129,7 @@ export const Editor: React.FC<EditorProps> = ({
           rel: 'noopener noreferrer',
         },
       }),
+      CustomSuperscript,
     ],
     content,
     editorProps: {
@@ -321,8 +348,8 @@ export const Editor: React.FC<EditorProps> = ({
     <div
       className={`flex flex-col bg-[#faf9f6] transition-all ${
         isFocusMode
-          ? 'fixed inset-0 z-50 p-6 md:p-12 overflow-y-auto'
-          : 'flex-1 min-h-[500px] rounded-xl border border-[#dcd6ca] shadow-xs'
+          ? 'fixed inset-0 z-50 p-4 md:p-12 overflow-y-auto'
+          : 'flex-1 min-h-0 min-h-[280px] rounded-xl border border-[#dcd6ca] shadow-xs overflow-hidden'
       }`}
     >
       {/* Visual Rich-Text Toolbar */}
@@ -707,7 +734,7 @@ export const Editor: React.FC<EditorProps> = ({
             </button>
 
             {isAiMenuOpen && (
-              <div className="absolute right-0 mt-1.5 w-64 bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in duration-100">
+              <div className="absolute right-0 mt-1.5 w-64 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in duration-100">
                 <div className="px-3 py-1.5 border-b border-[#f0ede6] text-[11px] text-[#736c61]">
                   {selectedWordCount > 0 ? (
                     <span className="font-medium text-[#2d333b]">
@@ -755,7 +782,7 @@ export const Editor: React.FC<EditorProps> = ({
       </div>
 
       {/* Real Rich-Text Document Body */}
-      <div className="flex-1 p-3 sm:p-5 md:p-8 overflow-y-auto">
+      <div className="flex-1 min-h-0 p-3 sm:p-5 md:p-8 overflow-y-auto">
         <EditorContent editor={editor} />
       </div>
 

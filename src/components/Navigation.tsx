@@ -449,247 +449,291 @@ export const Navigation: React.FC<NavigationProps> = ({
       {/* ========================================================================= */}
       {currentView === 'workspace' && activeProject && (
         <div className="bg-[#ede8dc] border-b border-[#ded7ca] px-3 sm:px-4 md:px-6 py-2 animate-in slide-in-from-top-1 duration-150">
-          {/* Mobile Tier 2 Layout (< 768px) */}
-          <div className="flex flex-col gap-2 md:hidden">
-            {/* Top row: Back link, Title, Save Status */}
-            <div className="flex items-center justify-between gap-2 min-w-0">
-              <button
-                type="button"
-                onClick={() => onNavigate('dashboard', activeProject.type)}
-                className="text-xs font-semibold text-[#5c5447] hover:text-[#1e232a] inline-flex items-center gap-1 shrink-0 px-2 py-1.5 rounded-md hover:bg-[#e2dcce] transition-colors min-h-[36px]"
-                title={`Back to ${getBackLabel()}`}
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span className="text-xs">{getBackLabel()}</span>
-              </button>
+          {/* Mobile Tier 2 Layout (< 768px): Single compact row with Back link, Truncated Title, Save Status, and Tools bottom sheet trigger */}
+          <div className="flex items-center justify-between gap-2 md:hidden min-w-0">
+            <button
+              type="button"
+              onClick={() => onNavigate('dashboard', activeProject.type)}
+              className="text-xs font-semibold text-[#5c5447] hover:text-[#1e232a] inline-flex items-center gap-1 shrink-0 px-2 py-1.5 rounded-md hover:bg-[#e2dcce] transition-colors min-h-[36px]"
+              title={`Back to ${getBackLabel()}`}
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span className="text-xs">{getBackLabel()}</span>
+            </button>
 
-              {/* Title centered/truncated */}
-              <span
-                className="font-editorial text-sm font-bold text-[#1e232a] truncate min-w-0 flex-1 text-center px-1"
-                title={activeProject.title || 'Untitled Draft'}
-              >
-                {activeProject.title || 'Untitled Draft'}
-              </span>
+            {/* Title centered/truncated */}
+            <span
+              className="font-editorial text-sm font-bold text-[#1e232a] truncate min-w-0 flex-1 text-center px-1"
+              title={activeProject.title || 'Untitled Draft'}
+            >
+              {activeProject.title || 'Untitled Draft'}
+            </span>
 
-              {/* Autosave Status */}
-              <div className="px-2 py-1 bg-white/90 border border-[#dcd6ca] rounded-md shadow-2xs shrink-0 select-none min-h-[32px] flex items-center">
-                {getSaveIndicator()}
-              </div>
+            {/* Autosave Status */}
+            <div className="px-2 py-1 bg-white/90 border border-[#dcd6ca] rounded-md shadow-2xs shrink-0 select-none min-h-[32px] flex items-center text-xs">
+              {getSaveIndicator()}
             </div>
 
-            {/* Bottom row: Primary Quick Panels + More Panels Menu */}
-            <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-[#ded7ca]/70">
-              <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto pb-0.5">
-                {/* Develop (Articles only) */}
-                {activeProject.type === 'article' && (
-                  <button
-                    type="button"
-                    onClick={() => handlePanelToggle('develop')}
-                    className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1 shrink-0 min-h-[36px] ${
-                      activePanel === 'develop'
-                        ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                        : 'bg-white/80 hover:bg-white text-[#4a443b] border border-[#dcd6ca]'
-                    }`}
-                    title="Develop Article: Idea → 5 Angles → Direction → Brief"
-                  >
-                    <Compass className={`w-3.5 h-3.5 ${activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'}`} />
-                    <span>Develop</span>
-                  </button>
-                )}
+            {/* Tools Bottom Sheet Trigger */}
+            <div className="relative shrink-0" ref={panelsMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsPanelsMenuOpen((prev) => !prev)}
+                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold transition-colors inline-flex items-center gap-1 min-h-[36px] border cursor-pointer ${
+                  activePanel !== null
+                    ? 'bg-amber-100 border-amber-300 text-amber-950 font-bold'
+                    : 'bg-white/90 border-[#dcd6ca] text-[#2b251d] hover:bg-white shadow-2xs'
+                }`}
+                title="Project Tools & Panels"
+              >
+                <MoreHorizontal className="w-4 h-4 text-amber-900" />
+                <span>Tools</span>
+                <ChevronDown className={`w-3 h-3 text-[#787166] transition-transform ${isPanelsMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
 
-                {/* Outline */}
-                <button
-                  type="button"
-                  onClick={() => handlePanelToggle('outline')}
-                  className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1 shrink-0 min-h-[36px] ${
-                    activePanel === 'outline'
-                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                      : 'bg-white/80 hover:bg-white text-[#4a443b] border border-[#dcd6ca]'
-                  }`}
-                  title="Content Outline"
-                >
-                  <ListOrdered className={`w-3.5 h-3.5 ${activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'}`} />
-                  <span>Outline</span>
-                </button>
-
-                {/* Draft Package */}
-                <button
-                  type="button"
-                  onClick={() => handlePanelToggle('draft_package')}
-                  className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1 shrink-0 min-h-[36px] ${
-                    activePanel === 'draft_package'
-                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                      : 'bg-white/80 hover:bg-white text-[#4a443b] border border-[#dcd6ca]'
-                  }`}
-                  title="Editorial Draft Package: Export to ChatGPT or external LLM"
-                >
-                  <Sparkles className={`w-3.5 h-3.5 ${activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'}`} />
-                  <span>Draft Package</span>
-                </button>
-
-                {/* Brief */}
-                <button
-                  type="button"
-                  onClick={() => handlePanelToggle('brief')}
-                  className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1 shrink-0 min-h-[36px] ${
-                    activePanel === 'brief'
-                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                      : 'bg-white/80 hover:bg-white text-[#4a443b] border border-[#dcd6ca]'
-                  }`}
-                  title="Project Brief"
-                >
-                  <Compass className={`w-3.5 h-3.5 ${activePanel === 'brief' ? 'text-amber-300' : 'text-amber-800'}`} />
-                  <span>Brief</span>
-                </button>
-
-                {/* Review */}
-                <button
-                  type="button"
-                  onClick={() => handlePanelToggle('review')}
-                  className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1 shrink-0 min-h-[36px] relative ${
-                    activePanel === 'review'
-                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                      : 'bg-white/80 hover:bg-white text-[#4a443b] border border-[#dcd6ca]'
-                  }`}
-                  title="AI Editorial Review"
-                >
-                  <ShieldCheck className={`w-3.5 h-3.5 ${activePanel === 'review' ? 'text-amber-300' : 'text-amber-700'}`} />
-                  <span>Review</span>
-                  {activeProject.editorialReview &&
-                    activeProject.editorialReview.findings.filter((f) => f.status === 'pending').length > 0 && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                    )}
-                </button>
-              </div>
-
-              {/* Mobile More Panels Dropdown Button */}
-              <div className="relative shrink-0" ref={panelsMenuRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsPanelsMenuOpen((prev) => !prev)}
-                  className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1 min-h-[36px] border ${
-                    ['controls', 'rules', 'instructions', 'links', 'qc', 'history'].includes(activePanel || '')
-                      ? 'bg-amber-100 border-amber-300 text-amber-950 font-semibold'
-                      : 'bg-white/80 border-[#dcd6ca] text-[#4a443b] hover:bg-white'
-                  }`}
-                  title="More Panels (Controls, Rules, Instructions, Links, QC, History)"
-                >
-                  <MoreHorizontal className="w-3.5 h-3.5 text-[#5c5447]" />
-                  <span>Panels</span>
-                  <ChevronDown className="w-3 h-3 text-[#787166]" />
-                </button>
-
-                {/* Mobile Panels Dropdown Menu */}
-                {isPanelsMenuOpen && (
+              {/* Mobile Full-Width Bottom Sheet Menu (< 768px) */}
+              {isPanelsMenuOpen && (
+                <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-end sm:hidden animate-in fade-in duration-150">
                   <div
-                    className="absolute right-0 mt-1.5 w-60 bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100"
-                    onClick={() => setIsPanelsMenuOpen(false)}
+                    className="w-full bg-[#faf9f6] rounded-t-2xl border-t border-[#dcd6ca] shadow-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-200"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] border-b border-[#f0ede6] mb-1 flex items-center justify-between">
-                      <span>Project Panels</span>
-                      <span className="text-[9px] font-normal text-[#8c8477]">Tap to open</span>
+                    {/* Header */}
+                    <div className="px-4 py-3 bg-[#ede8dc] border-b border-[#dcd6ca] flex items-center justify-between shrink-0">
+                      <div className="flex items-center gap-2">
+                        <Sliders className="w-4 h-4 text-amber-900" />
+                        <span className="font-editorial text-sm font-bold text-[#1e232a]">Project Tools & Panels</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsPanelsMenuOpen(false)}
+                        className="p-1 rounded-md text-[#615a50] hover:text-[#1e232a] hover:bg-[#e2dcce]"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePanelToggle('controls')}
-                      className={`w-full px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors ${
-                        activePanel === 'controls' ? 'bg-[#1e232a] text-white font-semibold' : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                      }`}
-                    >
-                      <Sparkles className={`w-4 h-4 ${activePanel === 'controls' ? 'text-amber-300' : 'text-amber-700'}`} />
-                      <div className="flex-1">
-                        <div>Writing Controls</div>
-                        <div className={`text-[10px] ${activePanel === 'controls' ? 'text-amber-200' : 'text-[#736c61]'}`}>Tone, format & AI model override</div>
-                      </div>
-                    </button>
+                    {/* Scrollable Panel Destinations */}
+                    <div className="p-4 space-y-4 overflow-y-auto text-xs flex-1 pb-safe">
+                      {/* Section 1: Writing & Workflow */}
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[#8a8275] mb-2 px-1">
+                          Writing & Workflow
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {activeProject.type === 'article' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsPanelsMenuOpen(false);
+                                handlePanelToggle('develop');
+                              }}
+                              className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                                activePanel === 'develop'
+                                  ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                  : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                              }`}
+                            >
+                              <Compass className={`w-4 h-4 shrink-0 ${activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'}`} />
+                              <div>
+                                <div className="font-semibold">Develop</div>
+                                <div className={`text-[10px] ${activePanel === 'develop' ? 'text-amber-200' : 'text-[#736c61]'}`}>5 Angles & Brief</div>
+                              </div>
+                            </button>
+                          )}
 
-                    <button
-                      type="button"
-                      onClick={() => handlePanelToggle('rules')}
-                      className={`w-full px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors ${
-                        activePanel === 'rules' ? 'bg-[#1e232a] text-white font-semibold' : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                      }`}
-                    >
-                      <Scale className={`w-4 h-4 ${activePanel === 'rules' ? 'text-purple-300' : 'text-purple-700'}`} />
-                      <div className="flex-1">
-                        <div>Content Rules</div>
-                        <div className={`text-[10px] ${activePanel === 'rules' ? 'text-purple-200' : 'text-[#736c61]'}`}>Hard constraints & forbidden words</div>
-                      </div>
-                    </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('outline');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'outline'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <ListOrdered className={`w-4 h-4 shrink-0 ${activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'}`} />
+                            <div>
+                              <div className="font-semibold">Outline</div>
+                              <div className={`text-[10px] ${activePanel === 'outline' ? 'text-blue-200' : 'text-[#736c61]'}`}>Content steps</div>
+                            </div>
+                          </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePanelToggle('instructions')}
-                      className={`w-full px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors ${
-                        activePanel === 'instructions' ? 'bg-[#1e232a] text-white font-semibold' : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                      }`}
-                    >
-                      <FileText className={`w-4 h-4 ${activePanel === 'instructions' ? 'text-amber-300' : 'text-amber-700'}`} />
-                      <div className="flex-1">
-                        <div>Project Instructions</div>
-                        <div className={`text-[10px] ${activePanel === 'instructions' ? 'text-amber-200' : 'text-[#736c61]'}`}>Draft-specific instructions</div>
-                      </div>
-                    </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('draft_package');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'draft_package'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <Sparkles className={`w-4 h-4 shrink-0 ${activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'}`} />
+                            <div>
+                              <div className="font-semibold">Draft Package</div>
+                              <div className={`text-[10px] ${activePanel === 'draft_package' ? 'text-amber-200' : 'text-[#736c61]'}`}>Export to LLM</div>
+                            </div>
+                          </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePanelToggle('research')}
-                      className={`w-full px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors ${
-                        activePanel === 'research' ? 'bg-[#1e232a] text-white font-semibold' : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                      }`}
-                    >
-                      <BookOpen className={`w-4 h-4 ${activePanel === 'research' ? 'text-amber-300' : 'text-amber-700'}`} />
-                      <div className="flex-1">
-                        <div>Research Studies</div>
-                        <div className={`text-[10px] ${activePanel === 'research' ? 'text-amber-200' : 'text-[#736c61]'}`}>Attached studies & empirical claims</div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('review');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'review'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <ShieldCheck className={`w-4 h-4 shrink-0 ${activePanel === 'review' ? 'text-amber-300' : 'text-amber-700'}`} />
+                            <div>
+                              <div className="font-semibold">AI Review</div>
+                              <div className={`text-[10px] ${activePanel === 'review' ? 'text-amber-200' : 'text-[#736c61]'}`}>Audit & critique</div>
+                            </div>
+                          </button>
+                        </div>
                       </div>
-                    </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePanelToggle('links')}
-                      className={`w-full px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors ${
-                        activePanel === 'links' ? 'bg-[#1e232a] text-white font-semibold' : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                      }`}
-                    >
-                      <Link2 className={`w-4 h-4 ${activePanel === 'links' ? 'text-blue-300' : 'text-blue-700'}`} />
-                      <div className="flex-1">
-                        <div>Internal Links</div>
-                        <div className={`text-[10px] ${activePanel === 'links' ? 'text-blue-200' : 'text-[#736c61]'}`}>Publication link opportunities</div>
-                      </div>
-                    </button>
+                      {/* Section 2: Controls & Rules */}
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[#8a8275] mb-2 px-1">
+                          Controls & Governance
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('controls');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'controls'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <Sparkles className={`w-4 h-4 shrink-0 ${activePanel === 'controls' ? 'text-amber-300' : 'text-amber-700'}`} />
+                            <div>
+                              <div className="font-semibold">Writing Controls</div>
+                              <div className={`text-[10px] ${activePanel === 'controls' ? 'text-amber-200' : 'text-[#736c61]'}`}>Tone & style</div>
+                            </div>
+                          </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePanelToggle('qc')}
-                      className={`w-full px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors ${
-                        activePanel === 'qc' ? 'bg-[#1e232a] text-white font-semibold' : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                      }`}
-                    >
-                      <ClipboardCheck className={`w-4 h-4 ${activePanel === 'qc' ? 'text-emerald-300' : 'text-emerald-700'}`} />
-                      <div className="flex-1">
-                        <div>Quality Control</div>
-                        <div className={`text-[10px] ${activePanel === 'qc' ? 'text-emerald-200' : 'text-[#736c61]'}`}>Readiness check & audits</div>
-                      </div>
-                    </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('rules');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'rules'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <Scale className={`w-4 h-4 shrink-0 ${activePanel === 'rules' ? 'text-purple-300' : 'text-purple-700'}`} />
+                            <div>
+                              <div className="font-semibold">Content Rules</div>
+                              <div className={`text-[10px] ${activePanel === 'rules' ? 'text-purple-200' : 'text-[#736c61]'}`}>Forbidden terms</div>
+                            </div>
+                          </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handlePanelToggle('history')}
-                      className={`w-full px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors ${
-                        activePanel === 'history' ? 'bg-[#1e232a] text-white font-semibold' : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                      }`}
-                    >
-                      <History className={`w-4 h-4 ${activePanel === 'history' ? 'text-indigo-300' : 'text-indigo-700'}`} />
-                      <div className="flex-1">
-                        <div>Version History</div>
-                        <div className={`text-[10px] ${activePanel === 'history' ? 'text-indigo-200' : 'text-[#736c61]'}`}>Snapshots & rollback</div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('instructions');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'instructions'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <FileText className={`w-4 h-4 shrink-0 ${activePanel === 'instructions' ? 'text-amber-300' : 'text-amber-700'}`} />
+                            <div>
+                              <div className="font-semibold">Instructions</div>
+                              <div className={`text-[10px] ${activePanel === 'instructions' ? 'text-amber-200' : 'text-[#736c61]'}`}>Draft notes</div>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('research');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'research'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <BookOpen className={`w-4 h-4 shrink-0 ${activePanel === 'research' ? 'text-amber-300' : 'text-amber-700'}`} />
+                            <div>
+                              <div className="font-semibold">Research</div>
+                              <div className={`text-[10px] ${activePanel === 'research' ? 'text-amber-200' : 'text-[#736c61]'}`}>Attached studies</div>
+                            </div>
+                          </button>
+                        </div>
                       </div>
-                    </button>
+
+                      {/* Section 3: Quality & History */}
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[#8a8275] mb-2 px-1">
+                          Quality & History
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('qc');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'qc'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <ClipboardCheck className={`w-4 h-4 shrink-0 ${activePanel === 'qc' ? 'text-emerald-300' : 'text-emerald-700'}`} />
+                            <div>
+                              <div className="font-semibold">Quality Control</div>
+                              <div className={`text-[10px] ${activePanel === 'qc' ? 'text-emerald-200' : 'text-[#736c61]'}`}>Readiness audit</div>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPanelsMenuOpen(false);
+                              handlePanelToggle('history');
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                              activePanel === 'history'
+                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                            }`}
+                          >
+                            <History className={`w-4 h-4 shrink-0 ${activePanel === 'history' ? 'text-blue-300' : 'text-blue-700'}`} />
+                            <div>
+                              <div className="font-semibold">History</div>
+                              <div className={`text-[10px] ${activePanel === 'history' ? 'text-blue-200' : 'text-[#736c61]'}`}>Version snapshots</div>
+                            </div>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -9,7 +9,7 @@ import { WritingProject } from '../../types/project';
 import { LinkOpportunity, InternalLink } from '../../types/internalLink';
 import { storage } from '../../services/storage';
 import { geminiService } from '../../services/geminiClient';
-import { extractUrlsFromHtml } from '../../utils/urlUtils';
+import { extractUrlsFromHtml, normalizeUrlForComparison } from '../../utils/urlUtils';
 import { toast } from '../../services/toastService';
 import {
   Link2,
@@ -27,6 +27,215 @@ import {
   BookOpen,
   MapPin,
 } from 'lucide-react';
+
+export interface LocationVerificationResult {
+  isVerified: boolean;
+  reason: string;
+  candidate?: {
+    from: number;
+    to: number;
+    text: string;
+    score: number;
+    matchType: 'link_mark_and_anchor' | 'link_mark_only' | 'anchor_text_only';
+  };
+}
+
+export function verifyOpportunityLocation(
+  opp: LinkOpportunity,
+  contentHtml: string,
+  editor?: any
+): LocationVerificationResult {
+  const targetUrl = opp.linkUrl || '';
+  const targetAnchor = (opp.suggestedAnchor || '').trim().toLowerCase();
+  const targetPassage = (opp.targetPassage || '').trim().toLowerCase();
+  const normTargetUrl = normalizeUrlForComparison(targetUrl);
+
+  const getParentBlockText = (doc: any, pos: number): string => {
+    try {
+      const docSize = doc.content.size;
+      const safePos = Math.min(Math.max(0, pos), docSize);
+      const $pos = doc.resolve(safePos);
+      return ($pos.parent?.textContent || '').toLowerCase();
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const expandLinkRange = (
+    doc: any,
+    startPos: number,
+    linkMark: any
+  ): { from: number; to: number; text: string } => {
+    let from = startPos;
+    const startNode = doc.nodeAt(startPos);
+    let to = startPos + (startNode?.nodeSize || 0);
+    const targetHref = normalizeUrlForComparison(linkMark?.attrs?.href || '');
+
+    try {
+      const $start = doc.resolve(startPos);
+      const parentStart = $start.start($start.depth);
+      let checkPos = startPos;
+      while (checkPos > parentStart) {
+        const prevNode = doc.nodeAt(checkPos - 1);
+        if (!prevNode || !prevNode.isText) break;
+        const prevLink = prevNode.marks?.find(
+          (m: any) =>
+            m.type.name === 'link' && normalizeUrlForComparison(m.attrs?.href || '') === targetHref
+        );
+        if (prevLink) {
+          checkPos -= prevNode.nodeSize;
+          from = checkPos;
+        } else {
+          break;
+        }
+      }
+    } catch (e) {}
+
+    try {
+      const $start = doc.resolve(startPos);
+      const parentEnd = $start.end($start.depth);
+      let checkPos = to;
+      while (checkPos < parentEnd) {
+        const nextNode = doc.nodeAt(checkPos);
+        if (!nextNode || !nextNode.isText) break;
+        const nextLink = nextNode.marks?.find(
+          (m: any) =>
+            m.type.name === 'link' && normalizeUrlForComparison(m.attrs?.href || '') === targetHref
+        );
+        if (nextLink) {
+          to += nextNode.nodeSize;
+          checkPos = to;
+        } else {
+          break;
+        }
+      }
+    } catch (e) {}
+
+    const text = doc.textBetween(from, to, ' ');
+    return { from, to, text };
+  };
+
+  if (editor?.state?.doc) {
+    const doc = editor.state.doc;
+    const candidates: Array<{
+      from: number;
+      to: number;
+      text: string;
+      score: number;
+      matchType: 'link_mark_and_anchor' | 'link_mark_only' | 'anchor_text_only';
+    }> = [];
+    const visitedRanges = new Set<string>();
+
+    doc.descendants((node: any, pos: number) => {
+      if (node.isText && node.text) {
+        const linkMark = node.marks?.find((m: any) => m.type.name === 'link' && m.attrs?.href);
+        if (linkMark) {
+          const markUrl = normalizeUrlForComparison(linkMark.attrs.href);
+          const isUrlMatch = normTargetUrl && markUrl === normTargetUrl;
+
+          if (isUrlMatch) {
+            const range = expandLinkRange(doc, pos, linkMark);
+            const rangeKey = `${range.from}-${range.to}`;
+
+            if (!visitedRanges.has(rangeKey)) {
+              visitedRanges.add(rangeKey);
+              let score = 100;
+
+              const parentText = getParentBlockText(doc, pos);
+              const linkText = range.text.toLowerCase();
+
+              if (targetAnchor && linkText.includes(targetAnchor)) {
+                score += 50;
+              }
+              if (
+                targetPassage &&
+                (parentText.includes(targetPassage.slice(0, 30)) || targetPassage.includes(linkText))
+              ) {
+                score += 30;
+              }
+
+              candidates.push({
+                from: range.from,
+                to: range.to,
+                text: range.text,
+                score,
+                matchType:
+                  targetAnchor && linkText.includes(targetAnchor)
+                    ? 'link_mark_and_anchor'
+                    : 'link_mark_only',
+              });
+            }
+          }
+        }
+      }
+    });
+
+    if (candidates.length === 0 && targetAnchor) {
+      doc.descendants((node: any, pos: number) => {
+        if (node.isText && node.text) {
+          const nodeText = node.text.toLowerCase();
+          let idx = nodeText.indexOf(targetAnchor);
+          while (idx !== -1) {
+            const from = pos + idx;
+            const to = from + targetAnchor.length;
+            const rangeKey = `${from}-${to}`;
+
+            if (!visitedRanges.has(rangeKey)) {
+              visitedRanges.add(rangeKey);
+              let score = 30;
+              const parentText = getParentBlockText(doc, pos);
+              if (targetPassage && parentText.includes(targetPassage.slice(0, 30))) {
+                score += 40;
+              }
+
+              candidates.push({
+                from,
+                to,
+                text: node.text.slice(idx, idx + targetAnchor.length),
+                score,
+                matchType: 'anchor_text_only',
+              });
+            }
+            idx = nodeText.indexOf(targetAnchor, idx + 1);
+          }
+        }
+      });
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+
+    if (candidates.length > 0) {
+      const bestMatch = candidates[0];
+      return {
+        isVerified: true,
+        reason: 'Location verified in draft document.',
+        candidate: bestMatch,
+      };
+    }
+  }
+
+  if (contentHtml) {
+    const urlsInHtml = extractUrlsFromHtml(contentHtml);
+    const hasMatchingUrlInHtml =
+      normTargetUrl && urlsInHtml.some((u) => normalizeUrlForComparison(u) === normTargetUrl);
+    const plainText = contentHtml.replace(/<[^>]+>/g, ' ').toLowerCase();
+    const hasAnchorInHtml = targetAnchor && plainText.includes(targetAnchor);
+
+    if (hasMatchingUrlInHtml || hasAnchorInHtml) {
+      return {
+        isVerified: true,
+        reason: 'Location verified in saved article content.',
+      };
+    }
+  }
+
+  return {
+    isVerified: false,
+    reason: targetAnchor
+      ? `Neither the hyperlink ("${targetUrl}") nor anchor phrase ("${targetAnchor}") could be located in the current draft.`
+      : `The hyperlink ("${targetUrl}") could not be located in the current draft.`,
+  };
+}
 
 interface LinkOpportunitiesDrawerProps {
   isOpen: boolean;
@@ -66,11 +275,10 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
   const usedUrls = extractUrlsFromHtml(project.content);
   const activeLibraryLinks = storage.getInternalLinks().filter((l) => l.active);
 
-  // Check which opportunities are stale (their anchor or passage is no longer in the HTML content)
+  // Check which opportunities are stale or unverified using unified location verification
   const isOpportunityStale = (opp: LinkOpportunity): boolean => {
-    if (!opp.suggestedAnchor) return true;
-    const plain = project.content.replace(/<[^>]+>/g, ' ');
-    return !plain.toLowerCase().includes(opp.suggestedAnchor.toLowerCase());
+    const res = verifyOpportunityLocation(opp, project.content, editorRef?.current);
+    return !res.isVerified;
   };
 
   const pendingOpportunities = opportunities.filter((o) => o.status === 'pending');
@@ -459,85 +667,123 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
       </div>
 
       {/* VIEW LOCATION MODAL */}
-      {viewingLocationOpp && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-[#faf9f6] border border-[#dcd6ca] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 text-xs">
-            <div className="flex items-center justify-between border-b border-[#e5dfd3] pb-3">
-              <div className="flex items-center gap-2">
-                <MapPin className="w-4 h-4 text-amber-800" />
-                <h4 className="font-editorial text-base font-bold text-[#1e232a]">
-                  Location Inspection: {viewingLocationOpp.linkTitle}
-                </h4>
-              </div>
-              <button
-                type="button"
-                onClick={() => setViewingLocationOpp(null)}
-                className="p-1.5 text-[#736c61] hover:text-[#1e232a] rounded-lg hover:bg-[#eae4d7]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {viewingLocationOpp && (() => {
+        const verification = verifyOpportunityLocation(
+          viewingLocationOpp,
+          project.content,
+          editorRef?.current
+        );
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447]">
-                  {viewingLocationOpp.status === 'accepted' ? 'Verified Inserted Link Location' : 'Proposed Insertion Passage'}
-                </span>
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    project.content.includes(viewingLocationOpp.suggestedAnchor) ||
-                    project.content.includes(viewingLocationOpp.linkUrl)
-                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
-                      : 'bg-amber-100 text-amber-900 border border-amber-200'
-                  }`}
+        return (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-[#faf9f6] border border-[#dcd6ca] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 text-xs">
+              <div className="flex items-center justify-between border-b border-[#e5dfd3] pb-3">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-amber-800" />
+                  <h4 className="font-editorial text-base font-bold text-[#1e232a]">
+                    Location Inspection: {viewingLocationOpp.linkTitle}
+                  </h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingLocationOpp(null)}
+                  className="p-1.5 text-[#736c61] hover:text-[#1e232a] rounded-lg hover:bg-[#eae4d7]"
                 >
-                  {project.content.includes(viewingLocationOpp.suggestedAnchor) ||
-                  project.content.includes(viewingLocationOpp.linkUrl)
-                    ? 'Verified in Draft'
-                    : 'Location Unverified / Stale'}
-                </span>
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              <div className="p-3 bg-white border border-[#dcd6ca] rounded-xl space-y-2">
-                <p className="font-editorial text-xs text-[#2b251d] leading-relaxed italic">
-                  "{viewingLocationOpp.targetPassage || viewingLocationOpp.suggestedAnchor}"
-                </p>
-                <div className="pt-2 border-t border-[#f0ede6] flex items-center justify-between text-[11px]">
-                  <span className="text-[#5c5447]">
-                    <strong>Target Anchor:</strong> {viewingLocationOpp.suggestedAnchor}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447]">
+                    {viewingLocationOpp.status === 'accepted'
+                      ? 'Verified Inserted Link Location'
+                      : 'Proposed Insertion Passage'}
                   </span>
-                  <span className="font-mono text-blue-800 truncate max-w-[200px]">
-                    {viewingLocationOpp.linkUrl}
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      verification.isVerified
+                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                        : 'bg-amber-100 text-amber-900 border border-amber-200'
+                    }`}
+                  >
+                    {verification.isVerified ? 'Verified in Draft' : 'Location Unverified / Stale'}
                   </span>
                 </div>
+
+                {!verification.isVerified && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-lg text-xs leading-relaxed">
+                    <strong>Notice:</strong> {verification.reason}
+                  </div>
+                )}
+
+                <div className="p-3 bg-white border border-[#dcd6ca] rounded-xl space-y-2">
+                  <p className="font-editorial text-xs text-[#2b251d] leading-relaxed italic">
+                    "{viewingLocationOpp.targetPassage || viewingLocationOpp.suggestedAnchor}"
+                  </p>
+                  <div className="pt-2 border-t border-[#f0ede6] flex items-center justify-between text-[11px]">
+                    <span className="text-[#5c5447]">
+                      <strong>Target Anchor:</strong> {viewingLocationOpp.suggestedAnchor}
+                    </span>
+                    <span className="font-mono text-blue-800 truncate max-w-[200px]">
+                      {viewingLocationOpp.linkUrl}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-[#e5dfd3] flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (verification.isVerified && verification.candidate && editorRef?.current) {
+                      const bestMatch = verification.candidate;
+                      setViewingLocationOpp(null);
+                      if (onClose) onClose();
+
+                      requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                          if (editorRef?.current) {
+                            const ed = editorRef.current;
+                            ed.chain()
+                              .focus()
+                              .setTextSelection({ from: bestMatch.from, to: bestMatch.to })
+                              .scrollIntoView()
+                              .run();
+
+                            toast.success(
+                              'Jumped to Link Location',
+                              `Highlighted "${bestMatch.text || viewingLocationOpp.suggestedAnchor}" in editor.`
+                            );
+                          }
+                        });
+                      });
+                    } else if (verification.isVerified && editorRef?.current) {
+                      editorRef.current.commands.focus();
+                      setViewingLocationOpp(null);
+                      if (onClose) onClose();
+                      toast.info('Editor Focused', 'Focused editor at verified document section.');
+                    } else {
+                      // Unverified location - keep modal open and issue exactly 1 toast
+                      toast.error('Location Unverified', verification.reason);
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#1e232a] text-white rounded-lg font-semibold hover:bg-[#2d3744] transition-colors cursor-pointer"
+                >
+                  Jump to Editor
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingLocationOpp(null)}
+                  className="px-4 py-2 bg-white border border-[#dcd6ca] text-[#4a443b] rounded-lg font-semibold hover:bg-[#f5f2ea]"
+                >
+                  Close
+                </button>
               </div>
             </div>
-
-            <div className="pt-2 border-t border-[#e5dfd3] flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (editorRef?.current) {
-                    editorRef.current.commands.focus();
-                    toast.success('Editor Focused', 'Jumped to editing surface.');
-                  }
-                  setViewingLocationOpp(null);
-                }}
-                className="px-4 py-2 bg-[#1e232a] text-white rounded-lg font-semibold hover:bg-[#2d3744] transition-colors"
-              >
-                Jump to Editor
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewingLocationOpp(null)}
-                className="px-4 py-2 bg-white border border-[#dcd6ca] text-[#4a443b] rounded-lg font-semibold hover:bg-[#f5f2ea]"
-              >
-                Close
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

@@ -238,3 +238,71 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #b8b19f;
 }
+
+/* Research In-Text Citations & References Section */
+.citation-ref, sup.citation-ref {
+  font-family: var(--theme-font-ui);
+  font-size: 0.72em;
+  line-height: 0;
+  vertical-align: super;
+  font-weight: 600;
+  color: #78350f; /* amber-900 */
+  padding: 0 1px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  user-select: none;
+}
+
+.citation-ref:hover, sup.citation-ref:hover {
+  color: #b45309; /* amber-700 */
+  text-decoration: underline;
+}
+
+.article-references {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--theme-border);
+}
+
+.article-references h2 {
+  font-family: var(--theme-font-editor);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--theme-text-primary);
+  margin-bottom: 0.75rem;
+}
+
+.references-list {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--theme-text-secondary);
+}
+
+.references-list li {
+  margin-bottom: 0.625rem;
+  padding-left: 0.25rem;
+}
+
+.ref-authors {
+  font-weight: 600;
+  color: var(--theme-text-primary);
+}
+
+.ref-title {
+  font-style: italic;
+  font-family: var(--theme-font-editor);
+}
+
+.ref-publication {
+  color: var(--theme-text-secondary);
+}
+
+.ref-link {
+  color: #1d4ed8;
+  word-break: break-all;
+  text-decoration: underline;
+  font-family: monospace;
+  font-size: 0.75rem;
+}

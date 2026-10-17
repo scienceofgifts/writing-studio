@@ -93,6 +93,8 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
+  const [actionsMenuPosition, setActionsMenuPosition] = useState<'left' | 'right'>('left');
+
   // Close menus when tapping outside
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
@@ -109,6 +111,32 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
     document.addEventListener('mousedown', handleOutside);
     return () => document.removeEventListener('mousedown', handleOutside);
   }, []);
+
+  // Viewport-aware positioning for Actions menu
+  useEffect(() => {
+    if (!isActionsMenuOpen || !actionsMenuRef.current) return;
+
+    const updatePosition = () => {
+      if (!actionsMenuRef.current) return;
+      const rect = actionsMenuRef.current.getBoundingClientRect();
+      const menuWidth = 240; // w-60 = 240px
+      const padding = 16;
+
+      if (rect.left + menuWidth > window.innerWidth - padding) {
+        if (rect.right - menuWidth >= padding) {
+          setActionsMenuPosition('right');
+        } else {
+          setActionsMenuPosition('left');
+        }
+      } else {
+        setActionsMenuPosition('left');
+      }
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    return () => window.removeEventListener('resize', updatePosition);
+  }, [isActionsMenuOpen]);
 
   // Status update
   const handleStatusChange = (newStatus: ProjectStatus) => {
@@ -265,9 +293,9 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
   return (
     <div className="flex-1 min-w-0 flex flex-col bg-[#faf9f6] overflow-hidden">
       {/* Top Workspace Strip */}
-      <div className="px-3 sm:px-6 py-2.5 sm:py-3 bg-[#f6f3eb] border-b border-[#e5dfd3] shrink-0 select-none">
+      <div className="px-3 sm:px-6 py-2 sm:py-3 bg-[#f6f3eb] border-b border-[#e5dfd3] shrink-0 select-none">
         {/* Title, Type & Status Row */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 min-w-0">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 min-w-0">
           <div className="flex-1 min-w-0">
             {/* Editable Title */}
             <input
@@ -275,7 +303,7 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
               value={project.title}
               onChange={(e) => handleTitleChange(e.target.value)}
               placeholder="Draft Title..."
-              className="w-full min-w-0 font-editorial text-xl sm:text-2xl md:text-3xl font-bold text-[#1e232a] bg-transparent focus:outline-hidden border-b border-transparent focus:border-amber-500 py-0.5 tracking-tight truncate"
+              className="w-full min-w-0 font-editorial text-lg sm:text-2xl md:text-3xl font-bold text-[#1e232a] bg-transparent focus:outline-hidden border-b border-transparent focus:border-amber-500 py-0.5 tracking-tight truncate"
             />
             {currentMeta.standfirst ? (
               <p
@@ -288,7 +316,7 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
             ) : (
               <p
                 onClick={() => setIsInfoDrawerOpen(true)}
-                className="text-[11px] text-[#8c8477] cursor-pointer hover:text-[#5c5447] mt-0.5"
+                className="text-[11px] text-[#8c8477] cursor-pointer hover:text-[#5c5447] mt-0.5 truncate hidden sm:block"
               >
                 + Add standfirst / deck and article metadata...
               </p>
@@ -302,7 +330,7 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => setIsActionsMenuOpen(!isActionsMenuOpen)}
-                className="px-2.5 py-1.5 text-xs font-semibold text-[#1e232a] bg-white border border-[#dcd6ca] rounded-lg hover:bg-[#ede8dc] transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                className="px-2.5 py-1.5 text-xs font-semibold text-[#1e232a] bg-white border border-[#dcd6ca] rounded-lg hover:bg-[#ede8dc] transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer min-h-[32px]"
                 title="Studio Actions & Tools"
               >
                 <Sliders className="w-3.5 h-3.5 text-amber-800" />
@@ -314,7 +342,11 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
               </button>
 
               {isActionsMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-60 bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                <div
+                  className={`absolute ${
+                    actionsMenuPosition === 'right' ? 'right-0' : 'left-0'
+                  } mt-1.5 w-60 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto`}
+                >
                   <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] border-b border-[#f0ede6] mb-1">
                     Studio & Research Tools
                   </div>
@@ -406,6 +438,25 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
                     {project.attachedStudyIds && project.attachedStudyIds.length > 0 && (
                       <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-100 text-amber-900">
                         {project.attachedStudyIds.length} attached
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      onTogglePanel?.('citations');
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-amber-900 shrink-0" />
+                      <span className="font-semibold">Citation Studio</span>
+                    </div>
+                    {project.citationRecommendations && project.citationRecommendations.filter((r) => r.status === 'pending').length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-100 text-amber-950">
+                        {project.citationRecommendations.filter((r) => r.status === 'pending').length} new
                       </span>
                     )}
                   </button>
@@ -521,6 +572,31 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
                   </span>
                 )}
               </button>
+
+              <button
+                type="button"
+                onClick={() => onTogglePanel?.('citations')}
+                className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer ${
+                  activePanel === 'citations'
+                    ? 'bg-[#1e232a] text-white border-[#1e232a]'
+                    : 'text-[#4a443b] bg-amber-50/70 border-amber-300 hover:bg-amber-100'
+                }`}
+                title="Research Citation Studio: Numbered In-Text Citations & References"
+              >
+                <BookOpen className={`w-3.5 h-3.5 ${activePanel === 'citations' ? 'text-amber-300' : 'text-amber-900'}`} />
+                <span>Citations</span>
+                {project.citationRecommendations && project.citationRecommendations.filter((r) => r.status === 'pending').length > 0 && (
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                      activePanel === 'citations'
+                        ? 'bg-amber-800 text-amber-100'
+                        : 'bg-amber-900 text-white'
+                    }`}
+                  >
+                    {project.citationRecommendations.filter((r) => r.status === 'pending').length}
+                  </span>
+                )}
+              </button>
             </div>
 
             {/* Export Dropdown Menu (Lightweight, non-dominant) */}
@@ -537,7 +613,7 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
               </button>
 
               {isExportMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-56 bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 mt-1.5 w-56 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto">
                   <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] border-b border-[#f0ede6] mb-1">
                     Science of Gifts Export
                   </div>
@@ -622,7 +698,7 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
 
               {isMobileAiOpen && (
                 <div
-                  className="absolute right-0 mt-1.5 w-52 bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100"
+                  className="absolute right-0 mt-1.5 w-52 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto"
                   onClick={() => setIsMobileAiOpen(false)}
                 >
                   <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] border-b border-[#f0ede6] mb-1">

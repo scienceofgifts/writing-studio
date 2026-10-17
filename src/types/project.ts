@@ -16,9 +16,11 @@ import { ModelId, AIRequestMetadata, AIActionType } from './models';
 import { ProjectVersionSnapshot } from './versionHistory';
 
 import { EditorialIdea } from './ideaGenerator';
+import { CitationRecommendation, CitedStudyReference } from './citation';
 export * from './giftGuide';
 export * from './models';
 export * from './versionHistory';
+export * from './citation';
 
 export type ProjectType = 'article' | 'gift_guide' | 'product_copy';
 
@@ -31,6 +33,7 @@ export type ActivePanel =
   | 'rules'
   | 'instructions'
   | 'links'
+  | 'citations'
   | 'review'
   | 'qc'
   | 'history'
@@ -471,6 +474,8 @@ export interface WritingProject {
   productCopyMeta?: ProductCopyMetadata;
   attachedStudyIds?: string[]; // Attached research studies for this project
   selectedClaimIds?: string[]; // Specifically chosen claims for editorial use
+  citationRecommendations?: CitationRecommendation[]; // Research citation recommendations
+  citedStudies?: CitedStudyReference[]; // Sources currently cited in the article text with active numbering
   editorialDevelopment?: EditorialDevelopment; // Editorial development workflow (Idea -> Angles -> Direction -> Brief)
   outlineStructure?: OutlineStructureType; // Applied structure type (essay, standard_article, guide, custom)
   outlineRationale?: string; // Editorial rationale for this outline progression
