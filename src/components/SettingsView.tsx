@@ -80,6 +80,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBackToStudio, onNa
       text: newText.trim(),
       category: newCategory,
       enabled: true,
+      updatedAt: new Date().toISOString(),
     };
     saveUpdated([...instructions, newItem]);
     setNewText('');

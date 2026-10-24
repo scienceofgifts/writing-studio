@@ -68,6 +68,9 @@ export interface ResearchFile {
   content: string; // Plain text or base64 data URL
   extractedText?: string;
   uploadedAt: string;
+  updatedAt: string;
+  _isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface ResearchStudy {

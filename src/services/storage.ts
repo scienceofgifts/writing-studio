@@ -66,7 +66,73 @@ export function markSeedsInitialized(): void {
   }
 }
 
-const storageListeners = new Set<() => void>();
+export type NonProjectCollectionName =
+  | 'style_profiles'
+  | 'internal_links'
+  | 'research_studies'
+  | 'research_claims'
+  | 'research_files'
+  | 'saved_ideas'
+  | 'global_instructions'
+  | 'settings';
+
+export interface StorageChangeDetail {
+  collection: NonProjectCollectionName;
+  docId: string;
+  action: 'upsert' | 'delete';
+  data?: any;
+}
+
+export type StorageListener = (
+  source?: 'project' | 'non_project' | 'sync',
+  details?: StorageChangeDetail[]
+) => void;
+
+const storageListeners = new Set<StorageListener>();
+
+export function computeCollectionDeltas<T extends { id: string; _isDeleted?: boolean }>(
+  collectionName: NonProjectCollectionName,
+  previousRaw: T[],
+  nextRaw: T[]
+): StorageChangeDetail[] {
+  const prevMap = new Map<string, T>(previousRaw.map((item) => [item.id, item]));
+  const nextMap = new Map<string, T>(nextRaw.map((item) => [item.id, item]));
+  const deltas: StorageChangeDetail[] = [];
+
+  for (const [id, nextItem] of nextMap.entries()) {
+    const prevItem = prevMap.get(id);
+    if (!prevItem) {
+      deltas.push({
+        collection: collectionName,
+        docId: id,
+        action: nextItem._isDeleted ? 'delete' : 'upsert',
+        data: nextItem,
+      });
+    } else {
+      if (JSON.stringify(prevItem) !== JSON.stringify(nextItem)) {
+        deltas.push({
+          collection: collectionName,
+          docId: id,
+          action: nextItem._isDeleted ? 'delete' : 'upsert',
+          data: nextItem,
+        });
+      }
+    }
+  }
+
+  for (const [id, prevItem] of prevMap.entries()) {
+    if (!nextMap.has(id) && !prevItem._isDeleted) {
+      deltas.push({
+        collection: collectionName,
+        docId: id,
+        action: 'delete',
+        data: { id, _isDeleted: true, deletedAt: new Date().toISOString() },
+      });
+    }
+  }
+
+  return deltas;
+}
 
 function mergeWithTombstones<T extends { id: string; updatedAt?: string; deletedAt?: string; _isDeleted?: boolean }>(
   localRaw: T[],
@@ -143,48 +209,56 @@ export const DEFAULT_GLOBAL_INSTRUCTIONS: GlobalInstruction[] = [
     text: "Never use generic AI filler phrases: 'Whether you're looking for...', 'Perfect for...', 'A thoughtful and meaningful gift...', 'In today's world...', 'Takes it to the next level...', 'Something they'll cherish...', 'Ideal choice for...', 'Designed to...'",
     category: 'voice',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
   {
     id: 'gi-2',
     text: "Do not use em dashes (—). Use colons, parentheses, semicolons, or natural sentence breaks instead.",
     category: 'constraint',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
   {
     id: 'gi-3',
     text: "Avoid hyperbolic marketing language. Write with calm, knowledgeable, civilized editorial authority.",
     category: 'style',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
   {
     id: 'gi-4',
     text: "Factual integrity is absolute: never invent product specifications, dimensions, origins, or historical claims not supplied in raw notes.",
     category: 'factuality',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
   {
     id: 'gi-5',
     text: "Favor specific physical observations (the drag of a nib, weight of vegetable-tanned bridle leather) over vague praise ('luxurious', 'stunning').",
     category: 'style',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
   {
     id: 'gi-6',
     text: "Vary sentence length and rhythm. Do not start sequential paragraphs with 'This [item] is...' or 'It also features...'.",
     category: 'style',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
   {
     id: 'gi-7',
     text: "Explain *why* an object matters to the recipient: its utility, craft heritage, and how it quietly enhances daily rituals.",
     category: 'voice',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
   {
     id: 'gi-8',
     text: "Keep SEO keywords conversational. Never stuff keywords or force awkward syntax for search engines.",
     category: 'constraint',
     enabled: true,
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
 ];
 
@@ -1132,13 +1206,31 @@ export const storage = {
     return DEFAULT_GLOBAL_MODEL_ID;
   },
 
-  setGlobalModel(modelId: ModelId): void {
+  setGlobalModel(modelId: ModelId, options?: { silent?: boolean }): void {
     try {
       if (modelId in MODEL_REGISTRY) {
         localStorage.setItem(STORAGE_KEY_GLOBAL_MODEL, modelId);
       }
     } catch (e) {
       console.error('Failed to save global model to localStorage:', e);
+    }
+    indexedDBService.put(STORES.SETTINGS, { key: 'globalModel', value: modelId }).catch((err) => {
+      console.warn('Async IndexedDB setGlobalModel error:', err);
+    });
+    if (!options?.silent) {
+      this.notifyListeners('non_project', [
+        {
+          collection: 'settings',
+          docId: 'user_settings',
+          action: 'upsert',
+          data: {
+            activeProjectId: this.getActiveProjectId(),
+            activeTheme: this.getTheme(),
+            globalAiModel: modelId,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ]);
     }
   },
 
@@ -1164,7 +1256,7 @@ export const storage = {
       console.warn('Failed to read global rules from localStorage:', e);
     }
     const seed = DEFAULT_GLOBAL_INSTRUCTIONS;
-    this.saveRawGlobalInstructions(seed);
+    this.saveRawGlobalInstructions(seed, { silent: true });
     return seed;
   },
 
@@ -1172,7 +1264,11 @@ export const storage = {
     return this.getRawGlobalInstructionsIncludingDeleted().filter((g) => !g._isDeleted);
   },
 
-  saveRawGlobalInstructions(rules: GlobalInstruction[]): void {
+  saveRawGlobalInstructions(
+    rules: GlobalInstruction[],
+    options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
+  ): void {
+    const previous = options?.changedDetails ? [] : this.getRawGlobalInstructionsIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_GLOBAL_RULES, JSON.stringify(rules));
     } catch (e) {
@@ -1181,7 +1277,37 @@ export const storage = {
     indexedDBService.putMany(STORES.GLOBAL_INSTRUCTIONS, rules).catch((err) => {
       console.warn('Async IndexedDB saveRawGlobalInstructions error:', err);
     });
-    this.notifyListeners();
+    if (!options?.silent) {
+      const details =
+        options?.changedDetails || computeCollectionDeltas('global_instructions', previous, rules);
+      if (details.length > 0) {
+        this.notifyListeners('non_project', details);
+      }
+    }
+  },
+
+  saveGlobalInstruction(rule: GlobalInstruction): void {
+    const list = this.getRawGlobalInstructionsIncludingDeleted();
+    const existingIndex = list.findIndex((g) => g.id === rule.id);
+    const updated = [...list];
+    const now = new Date().toISOString();
+    let savedRule: GlobalInstruction;
+    if (existingIndex >= 0) {
+      savedRule = { ...rule, _isDeleted: false, updatedAt: now };
+      updated[existingIndex] = savedRule;
+    } else {
+      savedRule = { ...rule, _isDeleted: false, updatedAt: now };
+      updated.push(savedRule);
+    }
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'global_instructions',
+        docId: savedRule.id,
+        action: 'upsert',
+        data: savedRule,
+      },
+    ];
+    this.saveRawGlobalInstructions(updated, { changedDetails: details });
   },
 
   saveGlobalInstructions(rules: GlobalInstruction[]): void {
@@ -1196,13 +1322,15 @@ export const storage = {
         mergedMap.set(id, tomb);
       }
     });
-    this.saveRawGlobalInstructions(Array.from(mergedMap.values()));
+    const updatedList = Array.from(mergedMap.values());
+    const details = computeCollectionDeltas('global_instructions', localRaw, updatedList);
+    this.saveRawGlobalInstructions(updatedList, { changedDetails: details });
   },
 
   saveGlobalInstructionsFromRemote(rules: GlobalInstruction[]): void {
     const localRaw = this.getRawGlobalInstructionsIncludingDeleted();
     const merged = mergeWithTombstones(localRaw, rules);
-    this.saveRawGlobalInstructions(merged);
+    this.saveRawGlobalInstructions(merged, { silent: true });
   },
 
   deleteGlobalInstruction(id: string): void {
@@ -1210,53 +1338,65 @@ export const storage = {
     const now = new Date().toISOString();
     const existingIndex = localRaw.findIndex((g) => g.id === id);
     let updated: GlobalInstruction[];
+    let tombstone: GlobalInstruction;
 
     if (existingIndex >= 0) {
       updated = [...localRaw];
-      updated[existingIndex] = {
+      tombstone = {
         ...updated[existingIndex],
         _isDeleted: true,
         deletedAt: now,
+        updatedAt: now,
       };
+      updated[existingIndex] = tombstone;
     } else {
-      updated = [
-        ...localRaw,
-        {
-          id,
-          text: 'Deleted Instruction',
-          category: 'constraint',
-          enabled: false,
-          _isDeleted: true,
-          deletedAt: now,
-        },
-      ];
+      tombstone = {
+        id,
+        text: 'Deleted Instruction',
+        category: 'constraint',
+        enabled: false,
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+      updated = [...localRaw, tombstone];
     }
 
-    this.saveRawGlobalInstructions(updated);
-    try {
-      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
-        syncEngine.deleteRecord('global_instructions', id);
-      }
-    } catch (e) {
-      console.warn('SyncEngine deleteRecord notice:', e);
-    }
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'global_instructions',
+        docId: id,
+        action: 'delete',
+        data: tombstone,
+      },
+    ];
+    this.saveRawGlobalInstructions(updated, { changedDetails: details });
   },
 
-  saveSettingsFromRemote(settings: { activeProjectId?: string; activeTheme?: any; globalAiModel?: any }): void {
+  saveSettingsFromRemote(settings: {
+    activeProjectId?: string;
+    activeTheme?: any;
+    globalAiModel?: any;
+    lastBackupTimestamp?: string;
+  }): void {
     if (settings.activeProjectId !== undefined) {
       this.setActiveProjectId(settings.activeProjectId);
     }
     if (settings.activeTheme) {
-      this.setTheme(settings.activeTheme);
+      this.setTheme(settings.activeTheme, { silent: true });
     }
     if (settings.globalAiModel) {
-      this.setGlobalModel(settings.globalAiModel);
+      this.setGlobalModel(settings.globalAiModel, { silent: true });
+    }
+    if (settings.lastBackupTimestamp) {
+      this.setLastBackupTimestamp(settings.lastBackupTimestamp, { silent: true });
     }
   },
 
   resetGlobalInstructions(): GlobalInstruction[] {
-    this.saveGlobalInstructions(DEFAULT_GLOBAL_INSTRUCTIONS);
-    return DEFAULT_GLOBAL_INSTRUCTIONS;
+    const defaults = DEFAULT_GLOBAL_INSTRUCTIONS.map((d) => ({ ...d, updatedAt: new Date().toISOString() }));
+    this.saveGlobalInstructions(defaults);
+    return defaults;
   },
 
   // ==========================================
@@ -1274,7 +1414,7 @@ export const storage = {
     return 'default';
   },
 
-  setTheme(theme: ThemeId): void {
+  setTheme(theme: ThemeId, options?: { silent?: boolean }): void {
     try {
       localStorage.setItem(STORAGE_KEY_THEME, theme);
     } catch (e) {
@@ -1283,7 +1423,21 @@ export const storage = {
     indexedDBService.put(STORES.SETTINGS, { key: 'theme', value: theme }).catch((err) => {
       console.warn('Async IndexedDB setTheme error:', err);
     });
-    this.notifyListeners();
+    if (!options?.silent) {
+      this.notifyListeners('non_project', [
+        {
+          collection: 'settings',
+          docId: 'user_settings',
+          action: 'upsert',
+          data: {
+            activeProjectId: this.getActiveProjectId(),
+            activeTheme: theme,
+            globalAiModel: this.getGlobalModel(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ]);
+    }
   },
 
   // ==========================================
@@ -1323,7 +1477,11 @@ export const storage = {
     return list.find((p) => p.id === id) || null;
   },
 
-  saveRawStyleProfiles(profiles: StyleProfile[], options?: { silent?: boolean }): void {
+  saveRawStyleProfiles(
+    profiles: StyleProfile[],
+    options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
+  ): void {
+    const previous = options?.changedDetails ? [] : this.getRawStyleProfilesIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_STYLE_PROFILES, JSON.stringify(profiles));
     } catch (e) {
@@ -1333,7 +1491,11 @@ export const storage = {
       console.warn('Async IndexedDB saveRawStyleProfiles error:', err);
     });
     if (!options?.silent) {
-      this.notifyListeners();
+      const details =
+        options?.changedDetails || computeCollectionDeltas('style_profiles', previous, profiles);
+      if (details.length > 0) {
+        this.notifyListeners('non_project', details);
+      }
     }
   },
 
@@ -1342,21 +1504,32 @@ export const storage = {
     const existingIndex = list.findIndex((p) => p.id === profile.id);
     const updated = [...list];
     const now = new Date().toISOString();
+    let savedProfile: StyleProfile;
     if (existingIndex >= 0) {
-      updated[existingIndex] = {
+      savedProfile = {
         ...profile,
         _isDeleted: false,
         updatedAt: now,
       };
+      updated[existingIndex] = savedProfile;
     } else {
-      updated.push({
+      savedProfile = {
         ...profile,
         _isDeleted: false,
         createdAt: profile.createdAt || now,
         updatedAt: now,
-      });
+      };
+      updated.push(savedProfile);
     }
-    this.saveRawStyleProfiles(updated);
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'style_profiles',
+        docId: savedProfile.id,
+        action: 'upsert',
+        data: savedProfile,
+      },
+    ];
+    this.saveRawStyleProfiles(updated, { changedDetails: details });
   },
 
   saveStyleProfiles(profiles: StyleProfile[]): void {
@@ -1371,13 +1544,15 @@ export const storage = {
         mergedMap.set(id, tomb);
       }
     });
-    this.saveRawStyleProfiles(Array.from(mergedMap.values()));
+    const updatedList = Array.from(mergedMap.values());
+    const details = computeCollectionDeltas('style_profiles', localRaw, updatedList);
+    this.saveRawStyleProfiles(updatedList, { changedDetails: details });
   },
 
   saveStyleProfilesFromRemote(profiles: StyleProfile[]): void {
     const localRaw = this.getRawStyleProfilesIncludingDeleted();
     const merged = mergeWithTombstones(localRaw, profiles);
-    this.saveRawStyleProfiles(merged);
+    this.saveRawStyleProfiles(merged, { silent: true });
   },
 
   deleteStyleProfile(id: string): void {
@@ -1385,43 +1560,44 @@ export const storage = {
     const now = new Date().toISOString();
     const existingIndex = localRaw.findIndex((p) => p.id === id);
     let updated: StyleProfile[];
+    let tombstone: StyleProfile;
 
     if (existingIndex >= 0) {
       updated = [...localRaw];
-      updated[existingIndex] = {
+      tombstone = {
         ...updated[existingIndex],
         _isDeleted: true,
         deletedAt: now,
         updatedAt: now,
       };
+      updated[existingIndex] = tombstone;
     } else {
-      updated = [
-        ...localRaw,
-        {
-          id,
-          name: 'Deleted Profile',
-          description: '',
-          samples: [],
-          generatedInstructions: [],
-          userEditedInstructions: [],
-          hasUserEdited: false,
-          isActive: false,
-          createdAt: now,
-          updatedAt: now,
-          _isDeleted: true,
-          deletedAt: now,
-        },
-      ];
+      tombstone = {
+        id,
+        name: 'Deleted Profile',
+        description: '',
+        samples: [],
+        generatedInstructions: [],
+        userEditedInstructions: [],
+        hasUserEdited: false,
+        isActive: false,
+        createdAt: now,
+        updatedAt: now,
+        _isDeleted: true,
+        deletedAt: now,
+      };
+      updated = [...localRaw, tombstone];
     }
 
-    this.saveRawStyleProfiles(updated);
-    try {
-      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
-        syncEngine.deleteRecord('style_profiles', id);
-      }
-    } catch (e) {
-      console.warn('SyncEngine deleteRecord notice:', e);
-    }
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'style_profiles',
+        docId: id,
+        action: 'delete',
+        data: tombstone,
+      },
+    ];
+    this.saveRawStyleProfiles(updated, { changedDetails: details });
   },
 
   // ==========================================
@@ -1487,7 +1663,11 @@ export const storage = {
     return list.find((l) => l.id === id) || null;
   },
 
-  saveRawInternalLinks(links: InternalLink[], options?: { silent?: boolean }): void {
+  saveRawInternalLinks(
+    links: InternalLink[],
+    options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
+  ): void {
+    const previous = options?.changedDetails ? [] : this.getRawInternalLinksIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_INTERNAL_LINKS, JSON.stringify(links));
     } catch (e) {
@@ -1497,7 +1677,11 @@ export const storage = {
       console.warn('Async IndexedDB saveRawInternalLinks error:', err);
     });
     if (!options?.silent) {
-      this.notifyListeners();
+      const details =
+        options?.changedDetails || computeCollectionDeltas('internal_links', previous, links);
+      if (details.length > 0) {
+        this.notifyListeners('non_project', details);
+      }
     }
   },
 
@@ -1506,21 +1690,32 @@ export const storage = {
     const existingIndex = rawList.findIndex((l) => l.id === link.id);
     const updated = [...rawList];
     const now = new Date().toISOString();
+    let savedLink: InternalLink;
     if (existingIndex >= 0) {
-      updated[existingIndex] = {
+      savedLink = {
         ...link,
         _isDeleted: false,
         updatedAt: now,
       };
+      updated[existingIndex] = savedLink;
     } else {
-      updated.push({
+      savedLink = {
         ...link,
         _isDeleted: false,
         createdAt: link.createdAt || now,
         updatedAt: now,
-      });
+      };
+      updated.push(savedLink);
     }
-    this.saveRawInternalLinks(updated);
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'internal_links',
+        docId: savedLink.id,
+        action: 'upsert',
+        data: savedLink,
+      },
+    ];
+    this.saveRawInternalLinks(updated, { changedDetails: details });
   },
 
   saveInternalLinks(links: InternalLink[]): void {
@@ -1535,13 +1730,15 @@ export const storage = {
         mergedMap.set(id, tomb);
       }
     });
-    this.saveRawInternalLinks(Array.from(mergedMap.values()));
+    const updatedList = Array.from(mergedMap.values());
+    const details = computeCollectionDeltas('internal_links', localRaw, updatedList);
+    this.saveRawInternalLinks(updatedList, { changedDetails: details });
   },
 
   saveInternalLinksFromRemote(links: InternalLink[]): void {
     const localRaw = this.getRawInternalLinksIncludingDeleted();
     const merged = mergeWithTombstones(localRaw, links);
-    this.saveRawInternalLinks(merged);
+    this.saveRawInternalLinks(merged, { silent: true });
   },
 
   deleteInternalLink(id: string): void {
@@ -1549,42 +1746,43 @@ export const storage = {
     const now = new Date().toISOString();
     const existingIndex = localRaw.findIndex((l) => l.id === id);
     let updated: InternalLink[];
+    let tombstone: InternalLink;
 
     if (existingIndex >= 0) {
       updated = [...localRaw];
-      updated[existingIndex] = {
+      tombstone = {
         ...updated[existingIndex],
         _isDeleted: true,
         deletedAt: now,
         updatedAt: now,
       };
+      updated[existingIndex] = tombstone;
     } else {
-      updated = [
-        ...localRaw,
-        {
-          id,
-          title: 'Deleted Link',
-          url: '',
-          topic: '',
-          description: '',
-          category: 'General',
-          active: false,
-          createdAt: now,
-          updatedAt: now,
-          _isDeleted: true,
-          deletedAt: now,
-        },
-      ];
+      tombstone = {
+        id,
+        title: 'Deleted Link',
+        url: '',
+        topic: '',
+        description: '',
+        category: 'General',
+        active: false,
+        createdAt: now,
+        updatedAt: now,
+        _isDeleted: true,
+        deletedAt: now,
+      };
+      updated = [...localRaw, tombstone];
     }
 
-    this.saveRawInternalLinks(updated);
-    try {
-      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
-        syncEngine.deleteRecord('internal_links', id);
-      }
-    } catch (e) {
-      console.warn('SyncEngine deleteRecord notice:', e);
-    }
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'internal_links',
+        docId: id,
+        action: 'delete',
+        data: tombstone,
+      },
+    ];
+    this.saveRawInternalLinks(updated, { changedDetails: details });
   },
 
   // ==========================================
@@ -1648,7 +1846,11 @@ export const storage = {
     return this.getRawSavedIdeasIncludingDeleted().filter((i) => !i._isDeleted);
   },
 
-  saveRawSavedIdeas(ideas: SavedEditorialIdea[]): void {
+  saveRawSavedIdeas(
+    ideas: SavedEditorialIdea[],
+    options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
+  ): void {
+    const previous = options?.changedDetails ? [] : this.getRawSavedIdeasIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_SAVED_IDEAS, JSON.stringify(ideas));
     } catch (e) {
@@ -1657,7 +1859,13 @@ export const storage = {
     indexedDBService.putMany(STORES.SAVED_IDEAS, ideas).catch((err) => {
       console.warn('Async IndexedDB saveRawSavedIdeas error:', err);
     });
-    this.notifyListeners();
+    if (!options?.silent) {
+      const details =
+        options?.changedDetails || computeCollectionDeltas('saved_ideas', previous, ideas);
+      if (details.length > 0) {
+        this.notifyListeners('non_project', details);
+      }
+    }
   },
 
   saveSavedIdeas(ideas: SavedEditorialIdea[]): void {
@@ -1672,13 +1880,15 @@ export const storage = {
         mergedMap.set(id, tomb);
       }
     });
-    this.saveRawSavedIdeas(Array.from(mergedMap.values()));
+    const updatedList = Array.from(mergedMap.values());
+    const details = computeCollectionDeltas('saved_ideas', localRaw, updatedList);
+    this.saveRawSavedIdeas(updatedList, { changedDetails: details });
   },
 
   saveSavedIdeasFromRemote(ideas: SavedEditorialIdea[]): void {
     const localRaw = this.getRawSavedIdeasIncludingDeleted();
     const merged = mergeWithTombstones(localRaw, ideas);
-    this.saveRawSavedIdeas(merged);
+    this.saveRawSavedIdeas(merged, { silent: true });
   },
 
   saveSavedIdea(idea: SavedEditorialIdea): boolean {
@@ -1694,8 +1904,18 @@ export const storage = {
       return false; // already saved
     }
     const rawList = this.getRawSavedIdeasIncludingDeleted();
-    const updated = [{ ...idea, _isDeleted: false, savedAt: idea.savedAt || new Date().toISOString() }, ...rawList];
-    this.saveRawSavedIdeas(updated);
+    const now = new Date().toISOString();
+    const newIdea = { ...idea, _isDeleted: false, savedAt: idea.savedAt || now, updatedAt: now };
+    const updated = [newIdea, ...rawList];
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'saved_ideas',
+        docId: newIdea.id,
+        action: 'upsert',
+        data: newIdea,
+      },
+    ];
+    this.saveRawSavedIdeas(updated, { changedDetails: details });
     return true;
   },
 
@@ -1704,42 +1924,43 @@ export const storage = {
     const now = new Date().toISOString();
     const existingIndex = localRaw.findIndex((item) => item.id === id);
     let updated: SavedEditorialIdea[];
+    let tombstone: SavedEditorialIdea;
 
     if (existingIndex >= 0) {
       updated = [...localRaw];
-      updated[existingIndex] = {
+      tombstone = {
         ...updated[existingIndex],
         _isDeleted: true,
         deletedAt: now,
         updatedAt: now,
       };
+      updated[existingIndex] = tombstone;
     } else {
-      updated = [
-        ...localRaw,
-        {
-          id,
-          title: 'Deleted Idea',
-          angle: '',
-          whyInteresting: '',
-          originalTopic: '',
-          goal: 'Informational',
-          ideaStyle: 'Mixed',
-          savedAt: now,
-          updatedAt: now,
-          _isDeleted: true,
-          deletedAt: now,
-        },
-      ];
+      tombstone = {
+        id,
+        title: 'Deleted Idea',
+        angle: '',
+        whyInteresting: '',
+        originalTopic: '',
+        goal: 'Informational',
+        ideaStyle: 'Mixed',
+        savedAt: now,
+        updatedAt: now,
+        _isDeleted: true,
+        deletedAt: now,
+      };
+      updated = [...localRaw, tombstone];
     }
 
-    this.saveRawSavedIdeas(updated);
-    try {
-      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
-        syncEngine.deleteRecord('saved_ideas', id);
-      }
-    } catch (e) {
-      console.warn('SyncEngine deleteRecord notice:', e);
-    }
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'saved_ideas',
+        docId: id,
+        action: 'delete',
+        data: tombstone,
+      },
+    ];
+    this.saveRawSavedIdeas(updated, { changedDetails: details });
   },
 
   isIdeaSaved(title: string, angle: string): boolean {
@@ -1755,15 +1976,18 @@ export const storage = {
   // ==========================================
   // STORAGE CHANGE SUBSCRIBERS
   // ==========================================
-  subscribe(callback: (source?: 'project' | 'non_project') => void): () => void {
-    storageListeners.add(callback as any);
-    return () => storageListeners.delete(callback as any);
+  subscribe(callback: StorageListener): () => void {
+    storageListeners.add(callback);
+    return () => storageListeners.delete(callback);
   },
 
-  notifyListeners(source: 'project' | 'non_project' = 'non_project'): void {
-    storageListeners.forEach((fn: any) => {
+  notifyListeners(
+    source: 'project' | 'non_project' | 'sync' = 'non_project',
+    details?: StorageChangeDetail[]
+  ): void {
+    storageListeners.forEach((fn) => {
       try {
-        fn(source);
+        fn(source, details);
       } catch (err) {
         console.error('Storage listener callback error:', err);
       }
@@ -1817,7 +2041,11 @@ export const storage = {
     return list.find((s) => s.id === id) || null;
   },
 
-  saveRawResearchStudies(studies: ResearchStudy[], options?: { silent?: boolean }): void {
+  saveRawResearchStudies(
+    studies: ResearchStudy[],
+    options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
+  ): void {
+    const previous = options?.changedDetails ? [] : this.getRawResearchStudiesIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_STUDIES, JSON.stringify(studies));
     } catch (e) {
@@ -1827,7 +2055,11 @@ export const storage = {
       console.warn('Async IndexedDB saveRawResearchStudies error:', err);
     });
     if (!options?.silent) {
-      this.notifyListeners();
+      const details =
+        options?.changedDetails || computeCollectionDeltas('research_studies', previous, studies);
+      if (details.length > 0) {
+        this.notifyListeners('non_project', details);
+      }
     }
   },
 
@@ -1843,13 +2075,15 @@ export const storage = {
         mergedMap.set(id, tomb);
       }
     });
-    this.saveRawResearchStudies(Array.from(mergedMap.values()));
+    const updatedList = Array.from(mergedMap.values());
+    const details = computeCollectionDeltas('research_studies', localRaw, updatedList);
+    this.saveRawResearchStudies(updatedList, { changedDetails: details });
   },
 
   saveResearchStudiesFromRemote(studies: ResearchStudy[]): void {
     const localRaw = this.getRawResearchStudiesIncludingDeleted();
     const merged = mergeWithTombstones(localRaw, studies);
-    this.saveRawResearchStudies(merged);
+    this.saveRawResearchStudies(merged, { silent: true });
   },
 
   saveResearchStudy(study: ResearchStudy): void {
@@ -1857,64 +2091,71 @@ export const storage = {
     const existingIndex = rawList.findIndex((s) => s.id === study.id);
     const updated = [...rawList];
     const now = new Date().toISOString();
+    let savedStudy: ResearchStudy;
     if (existingIndex >= 0) {
-      updated[existingIndex] = { ...study, _isDeleted: false, updatedAt: now };
+      savedStudy = { ...study, _isDeleted: false, updatedAt: now };
+      updated[existingIndex] = savedStudy;
     } else {
-      updated.push({
+      savedStudy = {
         ...study,
         _isDeleted: false,
         createdAt: study.createdAt || now,
         updatedAt: now,
-      });
+      };
+      updated.push(savedStudy);
     }
-    this.saveRawResearchStudies(updated);
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'research_studies',
+        docId: savedStudy.id,
+        action: 'upsert',
+        data: savedStudy,
+      },
+    ];
+    this.saveRawResearchStudies(updated, { changedDetails: details });
   },
 
   deleteResearchStudy(id: string): void {
-    console.log('[Storage] deleteResearchStudy invoked for ID:', id);
     const localRaw = this.getRawResearchStudiesIncludingDeleted();
     const now = new Date().toISOString();
     const existingIndex = localRaw.findIndex((s) => s.id === id);
     let updated: ResearchStudy[];
+    let tombstone: ResearchStudy;
 
     if (existingIndex >= 0) {
       updated = [...localRaw];
-      updated[existingIndex] = {
+      tombstone = {
         ...updated[existingIndex],
         _isDeleted: true,
         deletedAt: now,
         updatedAt: now,
       };
-      console.log('[Storage] Marked existing research study as deleted (tombstone):', id);
+      updated[existingIndex] = tombstone;
     } else {
-      updated = [
-        ...localRaw,
-        {
-          id,
-          title: 'Deleted Study',
-          authors: [],
-          tags: [],
-          dateAdded: now,
-          analysisStatus: 'unanalyzed',
-          createdAt: now,
-          updatedAt: now,
-          _isDeleted: true,
-          deletedAt: now,
-        },
-      ];
-      console.log('[Storage] Created new tombstone for missing research study ID:', id);
+      tombstone = {
+        id,
+        title: 'Deleted Study',
+        authors: [],
+        tags: [],
+        dateAdded: now,
+        analysisStatus: 'unanalyzed',
+        createdAt: now,
+        updatedAt: now,
+        _isDeleted: true,
+        deletedAt: now,
+      };
+      updated = [...localRaw, tombstone];
     }
 
-    this.saveRawResearchStudies(updated);
-    console.log('[Storage] saveRawResearchStudies completed successfully for ID:', id);
-    try {
-      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
-        syncEngine.deleteRecord('research_studies', id);
-        console.log('[Storage] syncEngine.deleteRecord called for study ID:', id);
-      }
-    } catch (e) {
-      console.warn('[Storage] SyncEngine deleteRecord notice:', e);
-    }
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'research_studies',
+        docId: id,
+        action: 'delete',
+        data: tombstone,
+      },
+    ];
+    this.saveRawResearchStudies(updated, { changedDetails: details });
   },
 
   getRawResearchClaimsIncludingDeleted(): ResearchClaim[] {
@@ -1944,7 +2185,11 @@ export const storage = {
     return this.getRawResearchClaimsIncludingDeleted().filter((c) => !c._isDeleted);
   },
 
-  saveRawResearchClaims(claims: ResearchClaim[], options?: { silent?: boolean }): void {
+  saveRawResearchClaims(
+    claims: ResearchClaim[],
+    options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
+  ): void {
+    const previous = options?.changedDetails ? [] : this.getRawResearchClaimsIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_CLAIMS, JSON.stringify(claims));
     } catch (e) {
@@ -1954,7 +2199,11 @@ export const storage = {
       console.warn('Async IndexedDB saveRawResearchClaims error:', err);
     });
     if (!options?.silent) {
-      this.notifyListeners();
+      const details =
+        options?.changedDetails || computeCollectionDeltas('research_claims', previous, claims);
+      if (details.length > 0) {
+        this.notifyListeners('non_project', details);
+      }
     }
   },
 
@@ -1970,13 +2219,15 @@ export const storage = {
         mergedMap.set(id, tomb);
       }
     });
-    this.saveRawResearchClaims(Array.from(mergedMap.values()));
+    const updatedList = Array.from(mergedMap.values());
+    const details = computeCollectionDeltas('research_claims', localRaw, updatedList);
+    this.saveRawResearchClaims(updatedList, { changedDetails: details });
   },
 
   saveResearchClaimsFromRemote(claims: ResearchClaim[]): void {
     const localRaw = this.getRawResearchClaimsIncludingDeleted();
     const merged = mergeWithTombstones(localRaw, claims);
-    this.saveRawResearchClaims(merged);
+    this.saveRawResearchClaims(merged, { silent: true });
   },
 
   saveResearchClaim(claim: ResearchClaim): void {
@@ -1984,17 +2235,28 @@ export const storage = {
     const existingIndex = rawList.findIndex((c) => c.id === claim.id);
     const updated = [...rawList];
     const now = new Date().toISOString();
+    let savedClaim: ResearchClaim;
     if (existingIndex >= 0) {
-      updated[existingIndex] = { ...claim, _isDeleted: false, updatedAt: now };
+      savedClaim = { ...claim, _isDeleted: false, updatedAt: now };
+      updated[existingIndex] = savedClaim;
     } else {
-      updated.push({
+      savedClaim = {
         ...claim,
         _isDeleted: false,
         createdAt: claim.createdAt || now,
         updatedAt: now,
-      });
+      };
+      updated.push(savedClaim);
     }
-    this.saveRawResearchClaims(updated);
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'research_claims',
+        docId: savedClaim.id,
+        action: 'upsert',
+        data: savedClaim,
+      },
+    ];
+    this.saveRawResearchClaims(updated, { changedDetails: details });
   },
 
   deleteResearchClaim(id: string): void {
@@ -2002,44 +2264,45 @@ export const storage = {
     const now = new Date().toISOString();
     const existingIndex = localRaw.findIndex((c) => c.id === id);
     let updated: ResearchClaim[];
+    let tombstone: ResearchClaim;
 
     if (existingIndex >= 0) {
       updated = [...localRaw];
-      updated[existingIndex] = {
+      tombstone = {
         ...updated[existingIndex],
         _isDeleted: true,
         deletedAt: now,
         updatedAt: now,
       };
+      updated[existingIndex] = tombstone;
     } else {
-      updated = [
-        ...localRaw,
-        {
-          id,
-          studyId: '',
-          claimText: 'Deleted Claim',
-          claimType: 'source_fact',
-          supportedBySource: '',
-          confidence: 'high',
-          createdAt: now,
-          updatedAt: now,
-          _isDeleted: true,
-          deletedAt: now,
-        },
-      ];
+      tombstone = {
+        id,
+        studyId: '',
+        claimText: 'Deleted Claim',
+        claimType: 'source_fact',
+        supportedBySource: '',
+        confidence: 'high',
+        createdAt: now,
+        updatedAt: now,
+        _isDeleted: true,
+        deletedAt: now,
+      };
+      updated = [...localRaw, tombstone];
     }
 
-    this.saveRawResearchClaims(updated);
-    try {
-      if (typeof syncEngine !== 'undefined' && syncEngine && typeof syncEngine.deleteRecord === 'function') {
-        syncEngine.deleteRecord('research_claims', id);
-      }
-    } catch (e) {
-      console.warn('SyncEngine deleteRecord notice:', e);
-    }
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'research_claims',
+        docId: id,
+        action: 'delete',
+        data: tombstone,
+      },
+    ];
+    this.saveRawResearchClaims(updated, { changedDetails: details });
   },
 
-  getResearchFiles(): ResearchFile[] {
+  getRawResearchFilesIncludingDeleted(): ResearchFile[] {
     const initialized = areSeedsInitialized();
     try {
       const stored = localStorage.getItem(STORAGE_KEY_RESEARCH_FILES);
@@ -2062,7 +2325,12 @@ export const storage = {
     return [];
   },
 
-  saveResearchFiles(files: ResearchFile[], options?: { silent?: boolean }): void {
+  getResearchFiles(): ResearchFile[] {
+    return this.getRawResearchFilesIncludingDeleted().filter((f) => !f._isDeleted);
+  },
+
+  saveResearchFiles(files: ResearchFile[], options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }): void {
+    const previous = options?.changedDetails ? [] : this.getRawResearchFilesIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_FILES, JSON.stringify(files));
     } catch (e) {
@@ -2072,26 +2340,86 @@ export const storage = {
       console.warn('Async IndexedDB saveResearchFiles error:', err);
     });
     if (!options?.silent) {
-      this.notifyListeners();
+      const details =
+        options?.changedDetails || computeCollectionDeltas('research_files', previous, files);
+      if (details.length > 0) {
+        this.notifyListeners('non_project', details);
+      }
     }
+  },
+
+  saveResearchFilesFromRemote(files: ResearchFile[]): void {
+    const localRaw = this.getRawResearchFilesIncludingDeleted();
+    const merged = mergeWithTombstones(localRaw, files);
+    this.saveResearchFiles(merged, { silent: true });
   },
 
   saveResearchFile(file: ResearchFile): void {
-    const list = this.getResearchFiles();
+    const list = this.getRawResearchFilesIncludingDeleted();
     const existingIndex = list.findIndex((f) => f.id === file.id);
+    const now = new Date().toISOString();
     const updated = [...list];
+    const savedFile: ResearchFile = {
+      ...file,
+      _isDeleted: false,
+      updatedAt: now,
+    };
     if (existingIndex >= 0) {
-      updated[existingIndex] = file;
+      updated[existingIndex] = savedFile;
     } else {
-      updated.push(file);
+      updated.push(savedFile);
     }
-    this.saveResearchFiles(updated);
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'research_files',
+        docId: savedFile.id,
+        action: 'upsert',
+        data: savedFile,
+      },
+    ];
+    this.saveResearchFiles(updated, { changedDetails: details });
   },
 
   deleteResearchFile(id: string): void {
-    const list = this.getResearchFiles();
-    const filtered = list.filter((f) => f.id !== id);
-    this.saveResearchFiles(filtered);
+    const list = this.getRawResearchFilesIncludingDeleted();
+    const now = new Date().toISOString();
+    const existingIndex = list.findIndex((f) => f.id === id);
+    let updated: ResearchFile[];
+    let tombstone: ResearchFile;
+
+    if (existingIndex >= 0) {
+      updated = [...list];
+      tombstone = {
+        ...updated[existingIndex],
+        _isDeleted: true,
+        deletedAt: now,
+        updatedAt: now,
+      };
+      updated[existingIndex] = tombstone;
+    } else {
+      tombstone = {
+        id,
+        fileName: 'Deleted File',
+        fileType: '',
+        fileSize: 0,
+        content: '',
+        uploadedAt: now,
+        updatedAt: now,
+        _isDeleted: true,
+        deletedAt: now,
+      };
+      updated = [...list, tombstone];
+    }
+
+    const details: StorageChangeDetail[] = [
+      {
+        collection: 'research_files',
+        docId: id,
+        action: 'delete',
+        data: tombstone,
+      },
+    ];
+    this.saveResearchFiles(updated, { changedDetails: details });
     indexedDBService.delete(STORES.RESEARCH_FILES, id).catch((err) => {
       console.warn('Async IndexedDB deleteResearchFile error:', err);
     });
@@ -2108,7 +2436,7 @@ export const storage = {
     }
   },
 
-  setLastBackupTimestamp(iso: string): void {
+  setLastBackupTimestamp(iso: string, options?: { silent?: boolean }): void {
     try {
       localStorage.setItem(STORAGE_KEY_LAST_BACKUP, iso);
     } catch (e) {
@@ -2117,7 +2445,22 @@ export const storage = {
     indexedDBService.put(STORES.SETTINGS, { key: 'lastBackupTimestamp', value: iso }).catch((err) => {
       console.warn('Async IndexedDB setLastBackupTimestamp error:', err);
     });
-    this.notifyListeners();
+    if (!options?.silent) {
+      this.notifyListeners('non_project', [
+        {
+          collection: 'settings',
+          docId: 'user_settings',
+          action: 'upsert',
+          data: {
+            activeProjectId: this.getActiveProjectId(),
+            activeTheme: this.getTheme(),
+            globalAiModel: this.getGlobalModel(),
+            lastBackupTimestamp: iso,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ]);
+    }
   },
 
   // ==========================================
@@ -2437,6 +2780,7 @@ export const DEFAULT_SEED_RESEARCH_FILES: ResearchFile[] = [
     content: `SCIENCE OF GIFTS RESEARCH ARCHIVE\nTitle: The Psychology of Material Permanence\nAuthors: Dr. Arthur Campbell & Dr. Evelyn Vance\nAbstract: When an individual receives an object that exhibits tangible craftsmanship, deliberate weight, and honest materials (brass, oak bark leather, cast iron), their neurological response differs fundamentally from receiving an ephemeral consumer novelty. This study details the mechanics of enduring appreciation.`,
     extractedText: 'When an individual receives an object that exhibits tangible craftsmanship...',
     uploadedAt: '2026-10-01T12:00:00.000Z',
+    updatedAt: '2026-10-01T12:00:00.000Z',
   },
 ];
 

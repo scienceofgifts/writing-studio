@@ -22,7 +22,7 @@ import {
 } from 'firebase/firestore';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType, signInWithGoogle, signOutUser } from './firebase';
-import { storage } from './storage';
+import { storage, StorageChangeDetail } from './storage';
 import { WritingProject, ProjectConflictInfo } from '../types/project';
 import { ProjectVersionSnapshot } from '../types/versionHistory';
 import { hasProjectUnsavedChanges, mergeVersionHistories } from './versionHistoryService';
@@ -80,6 +80,8 @@ export interface CloudStoreAdapter {
     versionSnapshot: ProjectVersionSnapshot,
     expectedBaseRevision: number
   ): Promise<{ newCloudRevision: number; syncedAt: string }>;
+  writeDoc?(userId: string, collectionName: string, docId: string, data: any): Promise<void>;
+  deleteDoc?(userId: string, collectionName: string, docId: string): Promise<void>;
 }
 
 export class StaleRevisionConflictError extends Error {
@@ -118,6 +120,9 @@ class SyncEngine {
   private activeEditorStateProvider: (() => ActiveEditorState) | null = null;
   private storageUnsubscribe: (() => void) | null = null;
 
+  // Track specific changed non-project documents for fine-grained sync
+  private pendingNonProjectChanges = new Map<string, StorageChangeDetail>();
+
   // Optional adapter and simulated network failure flag for runtime testing
   private customAdapter: CloudStoreAdapter | null = null;
   private simulateNetworkFailure: boolean = false;
@@ -141,9 +146,9 @@ class SyncEngine {
     setTimeout(() => {
       try {
         if (typeof storage !== 'undefined' && typeof storage.subscribe === 'function') {
-          this.storageUnsubscribe = storage.subscribe((source) => {
+          this.storageUnsubscribe = storage.subscribe((source, details) => {
             if (source === 'non_project') {
-              this.handleNonProjectLocalEdit();
+              this.handleNonProjectLocalEdit(details);
             }
           });
         }
@@ -309,6 +314,11 @@ class SyncEngine {
         this.attachSnapshotListeners(user.uid);
       }
 
+      // Step 3: Flush any pending non-project changes queued prior to reconciliation
+      if (this.pendingNonProjectChanges.size > 0) {
+        await this.pushNonProjectChangesToFirestore();
+      }
+
       this.status = 'synced';
       this.lastSyncedAt = new Date().toISOString();
       this.notifyStatusChange();
@@ -350,6 +360,11 @@ class SyncEngine {
       this.isInitialReconciliationComplete = true;
       if (!this.customAdapter) {
         this.attachSnapshotListeners(this.currentUser.uid);
+      }
+
+      // Flush any pending non-project changes on retry
+      if (this.pendingNonProjectChanges.size > 0) {
+        await this.pushNonProjectChangesToFirestore();
       }
 
       this.status = 'synced';
@@ -818,15 +833,28 @@ class SyncEngine {
   // ==========================================
   // NON-PROJECT COLLECTION SYNC
   // ==========================================
-  private handleNonProjectLocalEdit(): void {
+  public handleNonProjectLocalEdit(details?: StorageChangeDetail[]): void {
+    if (this.isApplyingRemote) {
+      return;
+    }
+
+    if (details && details.length > 0) {
+      details.forEach((d) => {
+        this.pendingNonProjectChanges.set(`${d.collection}:${d.docId}`, d);
+      });
+    }
+
     if (
-      this.isApplyingRemote ||
       !this.currentUser ||
       !this.isOnline ||
       this.simulateNetworkFailure ||
       !this.isInitialReconciliationComplete ||
-      this.customAdapter
+      (this.customAdapter && !this.customAdapter.writeDoc)
     ) {
+      return;
+    }
+
+    if (this.pendingNonProjectChanges.size === 0) {
       return;
     }
 
@@ -843,7 +871,7 @@ class SyncEngine {
     // 1. Reconcile Writing Projects safely (Cloud authoritative, no auto-upload of local projects)
     await this.reconcileProjectsOnLogin(userId);
 
-    if (this.customAdapter) {
+    if (this.customAdapter && !this.customAdapter.writeDoc) {
       return;
     }
 
@@ -895,7 +923,15 @@ class SyncEngine {
       (merged) => storage.saveGlobalInstructionsFromRemote(merged)
     );
 
-    // 8. User Settings
+    // 8. Research Files
+    await this.mergeCollection<any>(
+      userId,
+      'research_files',
+      storage.getRawResearchFilesIncludingDeleted(),
+      (merged) => storage.saveResearchFilesFromRemote(merged)
+    );
+
+    // 9. User Settings
     await this.mergeSettings(userId);
   }
 
@@ -1001,6 +1037,7 @@ class SyncEngine {
             activeProjectId: remote.activeProjectId,
             activeTheme: remote.activeTheme,
             globalAiModel: remote.globalAiModel,
+            lastBackupTimestamp: remote.lastBackupTimestamp,
           });
         } finally {
           this.isApplyingRemote = false;
@@ -1135,6 +1172,7 @@ class SyncEngine {
       { name: 'research_claims', apply: (items: ResearchClaim[]) => storage.saveResearchClaimsFromRemote(items) },
       { name: 'saved_ideas', apply: (items: SavedEditorialIdea[]) => storage.saveSavedIdeasFromRemote(items) },
       { name: 'global_instructions', apply: (items: GlobalInstruction[]) => storage.saveGlobalInstructionsFromRemote(items) },
+      { name: 'research_files', apply: (items: any[]) => storage.saveResearchFilesFromRemote(items) },
     ];
 
     collectionsToListen.forEach((colDef) => {
@@ -1174,6 +1212,7 @@ class SyncEngine {
               activeProjectId: data.activeProjectId,
               activeTheme: data.activeTheme,
               globalAiModel: data.globalAiModel,
+              lastBackupTimestamp: data.lastBackupTimestamp,
             });
             this.lastSyncedAt = new Date().toISOString();
             this.status = 'synced';
@@ -1205,45 +1244,64 @@ class SyncEngine {
   // ==========================================
   // OUTBOUND WRITE ENGINE (NON-PROJECT ONLY)
   // ==========================================
-  private async pushNonProjectChangesToFirestore(): Promise<void> {
+  public async pushNonProjectChangesToFirestore(): Promise<void> {
     if (
       !this.currentUser ||
       !this.isOnline ||
       this.simulateNetworkFailure ||
       this.isApplyingRemote ||
       !this.isInitialReconciliationComplete ||
-      this.customAdapter
+      (this.customAdapter && !this.customAdapter.writeDoc)
     ) {
       return;
     }
+
+    if (this.pendingNonProjectChanges.size === 0) {
+      return;
+    }
+
+    const userId = this.currentUser.uid;
+    const changesToPush = Array.from(this.pendingNonProjectChanges.values());
 
     try {
       this.status = 'syncing';
       this.notifyStatusChange();
 
-      const userId = this.currentUser.uid;
+      const failedChanges: StorageChangeDetail[] = [];
 
-      // IMPORTANT: Projects are intentionally excluded from blanket pushes.
-      // Projects are only uploaded when explicitly saved via saveProjectToCloud().
-      await Promise.all([
-        this.pushCollection(userId, 'style_profiles', storage.getRawStyleProfilesIncludingDeleted()),
-        this.pushCollection(userId, 'internal_links', storage.getRawInternalLinksIncludingDeleted()),
-        this.pushCollection(userId, 'research_studies', storage.getRawResearchStudiesIncludingDeleted()),
-        this.pushCollection(userId, 'research_claims', storage.getRawResearchClaimsIncludingDeleted()),
-        this.pushCollection(userId, 'saved_ideas', storage.getRawSavedIdeasIncludingDeleted()),
-        this.pushCollection(userId, 'global_instructions', storage.getRawGlobalInstructionsIncludingDeleted()),
-        this.writeDocToFirestore(userId, 'settings', 'user_settings', {
-          activeProjectId: storage.getActiveProjectId(),
-          activeTheme: storage.getTheme(),
-          globalAiModel: storage.getGlobalModel(),
-          updatedAt: new Date().toISOString(),
-        }),
-      ]);
+      const tasks = changesToPush.map(async (change) => {
+        try {
+          if (change.action === 'delete' || change.data?._isDeleted) {
+            await this.deleteRecord(change.collection, change.docId);
+          } else {
+            const dataToWrite =
+              change.data || this.getNonProjectDocFromStorage(change.collection, change.docId);
+            if (dataToWrite) {
+              await this.writeDocToFirestore(userId, change.collection, change.docId, dataToWrite);
+            }
+          }
+          this.pendingNonProjectChanges.delete(`${change.collection}:${change.docId}`);
+        } catch (err) {
+          console.error(`Failed to push document ${change.collection}/${change.docId}:`, err);
+          failedChanges.push(change);
+        }
+      });
 
-      this.status = 'synced';
-      this.lastSyncedAt = new Date().toISOString();
-      this.errorMessage = null;
-      this.notifyStatusChange();
+      await Promise.all(tasks);
+
+      if (failedChanges.length > 0) {
+        failedChanges.forEach((c) => {
+          this.pendingNonProjectChanges.set(`${c.collection}:${c.docId}`, c);
+        });
+        this.status = 'error';
+        this.errorMessage = `Failed to upload ${failedChanges.length} setting change(s).`;
+        this.notifyStatusChange();
+      } else {
+        this.status = 'synced';
+        this.lastSyncedAt = new Date().toISOString();
+        this.errorMessage = null;
+        this.notifyStatusChange();
+      }
     } catch (err: any) {
       console.error('Push non-project changes error:', err);
       this.status = 'error';
@@ -1252,23 +1310,46 @@ class SyncEngine {
     }
   }
 
-  private async pushCollection<T extends { id: string }>(
-    userId: string,
-    collectionName: string,
-    items: T[]
-  ): Promise<void> {
-    const tasks = items.map((item) =>
-      this.writeDocToFirestore(userId, collectionName, item.id, item)
-    );
-    await Promise.all(tasks);
+  private getNonProjectDocFromStorage(collectionName: string, docId: string): any {
+    switch (collectionName) {
+      case 'style_profiles':
+        return storage.getRawStyleProfilesIncludingDeleted().find((p) => p.id === docId);
+      case 'internal_links':
+        return storage.getRawInternalLinksIncludingDeleted().find((l) => l.id === docId);
+      case 'research_studies':
+        return storage.getRawResearchStudiesIncludingDeleted().find((s) => s.id === docId);
+      case 'research_claims':
+        return storage.getRawResearchClaimsIncludingDeleted().find((c) => c.id === docId);
+      case 'saved_ideas':
+        return storage.getRawSavedIdeasIncludingDeleted().find((i) => i.id === docId);
+      case 'global_instructions':
+        return storage.getRawGlobalInstructionsIncludingDeleted().find((g) => g.id === docId);
+      case 'settings':
+        return {
+          activeProjectId: storage.getActiveProjectId(),
+          activeTheme: storage.getTheme(),
+          globalAiModel: storage.getGlobalModel(),
+          lastBackupTimestamp: storage.getLastBackupTimestamp(),
+          updatedAt: new Date().toISOString(),
+        };
+      case 'research_files':
+        return storage.getRawResearchFilesIncludingDeleted().find((f) => f.id === docId);
+      default:
+        return null;
+    }
   }
 
-  private async writeDocToFirestore(
+  public async writeDocToFirestore(
     userId: string,
     collectionName: string,
     docId: string,
     data: any
   ): Promise<void> {
+    if (this.customAdapter?.writeDoc) {
+      await this.customAdapter.writeDoc(userId, collectionName, docId, data);
+      return;
+    }
+
     const docPath =
       collectionName === 'settings'
         ? `users/${userId}/settings/${docId}`
@@ -1287,6 +1368,7 @@ class SyncEngine {
       await setDoc(docRef, cleaned, { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, docPath);
+      throw err;
     }
   }
 
@@ -1294,8 +1376,15 @@ class SyncEngine {
   // SOFT DELETION TOMBSTONES
   // ==========================================
   public async deleteRecord(collectionName: string, docId: string): Promise<void> {
-    if (!this.currentUser || !this.isOnline || this.simulateNetworkFailure || this.customAdapter) return;
+    if (!this.currentUser || !this.isOnline || this.simulateNetworkFailure) return;
     const userId = this.currentUser.uid;
+
+    if (this.customAdapter?.deleteDoc) {
+      await this.customAdapter.deleteDoc(userId, collectionName, docId);
+      this.pendingNonProjectChanges.delete(`${collectionName}:${docId}`);
+      return;
+    }
+
     const path = `users/${userId}/${collectionName}/${docId}`;
     try {
       const tombstone = {
@@ -1306,8 +1395,26 @@ class SyncEngine {
         syncedAt: serverTimestamp(),
       };
       await setDoc(doc(db, 'users', userId, collectionName, docId), tombstone, { merge: true });
+      this.pendingNonProjectChanges.delete(`${collectionName}:${docId}`);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, path);
+      throw err;
+    }
+  }
+
+  public getPendingNonProjectChanges(): StorageChangeDetail[] {
+    return Array.from(this.pendingNonProjectChanges.values());
+  }
+
+  public getPendingNonProjectChangesCount(): number {
+    return this.pendingNonProjectChanges.size;
+  }
+
+  public clearPendingNonProjectChanges(): void {
+    this.pendingNonProjectChanges.clear();
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
     }
   }
 }

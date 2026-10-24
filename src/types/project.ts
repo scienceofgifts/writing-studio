@@ -130,6 +130,7 @@ export interface GlobalInstruction {
   text: string;
   category: 'style' | 'constraint' | 'voice' | 'factuality';
   enabled: boolean;
+  updatedAt: string;
   _isDeleted?: boolean;
   deletedAt?: string;
 }

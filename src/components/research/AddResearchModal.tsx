@@ -209,6 +209,7 @@ export const AddResearchModal: React.FC<AddResearchModalProps> = ({
           content: base64Content,
           extractedText: extractedTextPreview || undefined,
           uploadedAt: nowIso,
+          updatedAt: nowIso,
         });
       }
 
