@@ -1,0 +1,308 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Centralized Theme Typography Roles */
+    --theme-font-editor: 'Newsreader', Georgia, Cambria, 'Times New Roman', serif;
+    --theme-font-ui: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --theme-font-display: 'Cinzel', Georgia, serif;
+    --theme-font-size-base: 16px;
+    --theme-editor-line-height: 1.85;
+
+    /* Centralized Theme Colors (Default Theme - Science of Gifts Classic) */
+    --theme-bg-app: #faf9f6;
+    --theme-surface-primary: #ffffff;
+    --theme-surface-secondary: #f6f3eb;
+    --theme-surface-elevated: #fdfbf7;
+    --theme-text-primary: #1e232a;
+    --theme-text-secondary: #5c5447;
+    --theme-text-muted: #8a8275;
+    --theme-border: #e5dfd3;
+    --theme-border-subtle: #ede7db;
+    --theme-accent-primary: #92400e;
+    --theme-accent-hover: #78350f;
+    --theme-accent-text: #ffffff;
+    --theme-success: #15803d;
+    --theme-warning: #b45309;
+    --theme-error: #b91c1c;
+
+    /* Centralized Theme Visual Properties */
+    --theme-radius-sm: 0.375rem;
+    --theme-radius-md: 0.5rem;
+    --theme-radius-lg: 0.75rem;
+    --theme-editor-max-width: 840px;
+
+    /* Backwards compatibility aliases */
+    --font-serif: var(--theme-font-editor);
+    --font-sans: var(--theme-font-ui);
+    --font-display: var(--theme-font-display);
+  }
+
+  body {
+    font-family: var(--theme-font-ui);
+    background-color: var(--theme-bg-app);
+    color: var(--theme-text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+.font-editorial {
+  font-family: var(--theme-font-editor);
+}
+
+.font-display {
+  font-family: var(--theme-font-display);
+}
+
+.font-ui {
+  font-family: var(--theme-font-ui);
+}
+
+/* Editorial paper texture feel */
+.bg-parchment {
+  background-color: var(--theme-bg-app);
+}
+
+.bg-parchment-light {
+  background-color: var(--theme-surface-primary);
+}
+
+.bg-parchment-card {
+  background-color: var(--theme-surface-secondary);
+}
+
+.border-parchment {
+  border-color: var(--theme-border);
+}
+
+/* Real Rich-Text Typography & Block Rendering */
+.ProseMirror {
+  outline: none;
+  font-family: var(--theme-font-editor);
+  font-size: 1.125rem;
+  line-height: var(--theme-editor-line-height);
+  color: var(--theme-text-primary);
+  min-height: 380px;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 640px) {
+  .ProseMirror {
+    font-size: 1rem;
+    line-height: 1.65;
+  }
+  .ProseMirror h1 {
+    font-size: 1.65rem !important;
+    margin-top: 1.25rem !important;
+  }
+  .ProseMirror h2 {
+    font-size: 1.35rem !important;
+    margin-top: 1.15rem !important;
+  }
+  .ProseMirror h3 {
+    font-size: 1.15rem !important;
+    margin-top: 1rem !important;
+  }
+}
+
+.ProseMirror p {
+  margin-bottom: 1.15rem;
+}
+
+.ProseMirror h1 {
+  font-family: var(--font-serif);
+  font-size: 2.15rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #14181f;
+  margin-top: 1.75rem;
+  margin-bottom: 0.85rem;
+  letter-spacing: -0.02em;
+}
+
+.ProseMirror h2 {
+  font-family: var(--font-serif);
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #1e232a;
+  margin-top: 1.5rem;
+  margin-bottom: 0.65rem;
+  letter-spacing: -0.01em;
+}
+
+.ProseMirror h3 {
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #2b323c;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.ProseMirror h4 {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #38414e;
+  margin-top: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.ProseMirror blockquote {
+  border-left: 3px solid #b8a990;
+  padding-left: 1.25rem;
+  margin: 1.35rem 0;
+  font-style: italic;
+  color: #4a443b;
+  background-color: #f9f7f2;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.ProseMirror ul {
+  list-style-type: disc;
+  padding-left: 1.75rem;
+  margin-bottom: 1.15rem;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: 1.75rem;
+  margin-bottom: 1.15rem;
+}
+
+.ProseMirror li {
+  margin-bottom: 0.35rem;
+}
+
+.ProseMirror a {
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.ProseMirror a:hover {
+  color: #1e40af;
+}
+
+.ProseMirror strong {
+  font-weight: 700;
+  color: #14181f;
+}
+
+.ProseMirror em {
+  font-style: italic;
+}
+
+.ProseMirror u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ProseMirror s {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: #a8a194;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Subtle custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8d3c5;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #b8b19f;
+}
+
+/* Research In-Text Citations & References Section */
+.citation-ref, sup.citation-ref {
+  font-family: var(--theme-font-ui);
+  font-size: 0.72em;
+  line-height: 0;
+  vertical-align: super;
+  font-weight: 600;
+  color: #78350f; /* amber-900 */
+  padding: 0 1px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  user-select: none;
+}
+
+.citation-ref:hover, sup.citation-ref:hover {
+  color: #b45309; /* amber-700 */
+  text-decoration: underline;
+}
+
+.article-references {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--theme-border);
+}
+
+.article-references h2 {
+  font-family: var(--theme-font-editor);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--theme-text-primary);
+  margin-bottom: 0.75rem;
+}
+
+.references-list {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--theme-text-secondary);
+}
+
+.references-list li {
+  margin-bottom: 0.625rem;
+  padding-left: 0.25rem;
+}
+
+.ref-authors {
+  font-weight: 600;
+  color: var(--theme-text-primary);
+}
+
+.ref-title {
+  font-style: italic;
+  font-family: var(--theme-font-editor);
+}
+
+.ref-publication {
+  color: var(--theme-text-secondary);
+}
+
+.ref-link {
+  color: #1d4ed8;
+  word-break: break-all;
+  text-decoration: underline;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
