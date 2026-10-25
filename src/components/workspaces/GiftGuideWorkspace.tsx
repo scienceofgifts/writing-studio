@@ -704,12 +704,29 @@ export const GiftGuideWorkspace: React.FC<GiftGuideWorkspaceProps> = ({
             <div className="flex-1 flex flex-col overflow-hidden bg-white">
               <Editor
                 projectId={project.id}
+                project={project}
                 content={project.content}
+                editingNotes={project.editingNotes || []}
                 editorRef={editorRef}
                 onChange={(newContent) =>
                   onChange({
                     ...project,
                     content: ensureSemanticHtml(newContent),
+                  })
+                }
+                onChangeWithNotes={(newContent, updatedNotes) =>
+                  onChange({
+                    ...project,
+                    content: ensureSemanticHtml(newContent),
+                    editingNotes: updatedNotes,
+                    updatedAt: new Date().toISOString(),
+                  })
+                }
+                onEditingNotesChange={(updatedNotes) =>
+                  onChange({
+                    ...project,
+                    editingNotes: updatedNotes,
+                    updatedAt: new Date().toISOString(),
                   })
                 }
                 onExplicitAiAction={async (action, text, range) => {

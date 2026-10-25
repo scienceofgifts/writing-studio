@@ -11,6 +11,7 @@ import {
   VersionDiffResult,
 } from '../types/versionHistory';
 import { countWords, extractPlainTextFromHtml } from '../utils/richText';
+import { reconcileNotesWithHtmlContent } from '../utils/editingNotes';
 import { ModelId } from '../types/models';
 
 const MAX_VERSION_COUNT = 50;
@@ -30,6 +31,7 @@ export function extractStructuredState(project: WritingProject): StructuredProje
     articleMeta: project.articleMeta ? JSON.parse(JSON.stringify(project.articleMeta)) : undefined,
     giftGuideMeta: project.giftGuideMeta ? JSON.parse(JSON.stringify(project.giftGuideMeta)) : undefined,
     productCopyMeta: project.productCopyMeta ? JSON.parse(JSON.stringify(project.productCopyMeta)) : undefined,
+    editingNotes: project.editingNotes ? JSON.parse(JSON.stringify(project.editingNotes)) : undefined,
   };
 }
 
@@ -102,10 +104,13 @@ export function createVersionSnapshot(
  * Restores a selected version snapshot into the project.
  * Automatically saves a checkpoint of current document before restoring,
  * then marks the restored version as a new current version.
+ * Preserves current editingNotes by default and re-anchors them against the restored content
+ * so restoring an older version never unexpectedly wipes out active editing notes.
  */
 export function restoreVersionSnapshot(
   project: WritingProject,
-  targetVersionId: string
+  targetVersionId: string,
+  options?: { replaceEditingNotesWithSnapshot?: boolean }
 ): { updatedProject: WritingProject; restoredVersion: ProjectVersionSnapshot } | null {
   const history = project.versionHistory || [];
   const targetVersion = history.find((v) => v.id === targetVersionId);
@@ -118,8 +123,16 @@ export function restoreVersionSnapshot(
     force: true,
   });
 
-  // 2. Prepare restored project state
+  // 2. Prepare restored project state and preserve/reconcile editing notes against restored HTML
   const restoredState = targetVersion.structuredState;
+  const sourceNotes = options?.replaceEditingNotesWithSnapshot
+    ? restoredState.editingNotes || []
+    : project.editingNotes && project.editingNotes.length > 0
+    ? project.editingNotes
+    : restoredState.editingNotes || [];
+
+  const reconciledNotes = reconcileNotesWithHtmlContent(targetVersion.content, sourceNotes);
+
   const nextVersionNumber = historyWithCurrentCheckpoint.length > 0
     ? historyWithCurrentCheckpoint[0].versionNumber + 1
     : targetVersion.versionNumber + 1;
@@ -134,7 +147,10 @@ export function restoreVersionSnapshot(
     wordCount: targetVersion.wordCount,
     characterCount: targetVersion.characterCount,
     content: targetVersion.content,
-    structuredState: restoredState,
+    structuredState: {
+      ...restoredState,
+      editingNotes: reconciledNotes,
+    },
     basedOnVersionId: targetVersion.id,
     actionDescription: `Restored from Version ${targetVersion.versionNumber}`,
   };
@@ -151,6 +167,7 @@ export function restoreVersionSnapshot(
     articleMeta: restoredState.articleMeta || project.articleMeta,
     giftGuideMeta: restoredState.giftGuideMeta || project.giftGuideMeta,
     productCopyMeta: restoredState.productCopyMeta || project.productCopyMeta,
+    editingNotes: reconciledNotes,
     // Stale preservation: clear any pending ephemeral diff proposals
     versionHistory: [restoredCheckpoint, ...historyWithCurrentCheckpoint],
     updatedAt: new Date().toISOString(),
@@ -317,6 +334,14 @@ export function mergeVersionHistories(
  */
 function buildComparableProjectFingerprint(project: WritingProject): string {
   const normalizedContent = (project.content || '<p></p>').trim();
+  const normalizedNotes = (project.editingNotes || []).map((n) => ({
+    id: n.id,
+    quotedText: n.quotedText,
+    instruction: n.instruction,
+    from: n.from,
+    to: n.to,
+    anchorStatus: n.anchorStatus,
+  }));
   return JSON.stringify({
     title: (project.title || '').trim(),
     status: project.status || 'draft',
@@ -336,6 +361,7 @@ function buildComparableProjectFingerprint(project: WritingProject): string {
     giftGuideMeta: project.giftGuideMeta || null,
     productCopyMeta: project.productCopyMeta || null,
     editorialDevelopment: project.editorialDevelopment || null,
+    editingNotes: normalizedNotes,
   });
 }
 

@@ -449,6 +449,28 @@ export interface QCResult {
   isStale?: boolean;
 }
 
+export type EditingNoteAnchorStatus = 'resolved' | 'ambiguous' | 'unresolved';
+
+export type EditingNoteInputMethod = 'voice' | 'text';
+
+export interface ArticleEditingNote {
+  id: string;
+  projectId: string;
+  quotedText: string; // Exact selected passage text
+  paragraphContext: string; // Surrounding paragraph / block text
+  headingContext?: string; // Nearest preceding section heading if available
+  prefixContext: string; // Preceding characters for disambiguation
+  suffixContext: string; // Following characters for disambiguation
+  from: number; // ProseMirror document start position
+  to: number; // ProseMirror document end position
+  instruction: string; // Confirmed editing instruction
+  rawTranscript?: string; // Original raw transcript if created via voice
+  inputMethod: EditingNoteInputMethod;
+  anchorStatus: EditingNoteAnchorStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ProjectSaveStatus =
   | 'unsaved'
   | 'saving_local'
@@ -500,6 +522,7 @@ export interface WritingProject {
   outlineStructure?: OutlineStructureType; // Applied structure type (essay, standard_article, guide, custom)
   outlineRationale?: string; // Editorial rationale for this outline progression
   outlineMetadata?: OutlineStudioMetadata; // Additional Outline Studio metadata
+  editingNotes?: ArticleEditingNote[]; // Anchored voice & written editing notes (separate from article HTML)
   cloudRevision?: number; // Server-grounded revision number (1, 2, 3...)
   baseCloudRevision?: number; // Cloud revision this local state was based on (0 if never synced)
   hasUnsyncedLocalSave?: boolean; // True when explicitly saved locally while signed out or cloud save failed

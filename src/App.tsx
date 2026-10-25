@@ -55,6 +55,7 @@ import {
   mergeVersionHistories,
 } from './services/versionHistoryService';
 import { ensureSemanticHtml } from './utils/richText';
+import { reconcileNotesWithHtmlContent } from './utils/editingNotes';
 import { applyHyperlinkToHtml, isValidUrl, isUrlAlreadyInDocument } from './utils/urlUtils';
 import { applyTheme } from './theme/tokens';
 import { useDocumentSearch } from './utils/useDocumentSearch';
@@ -1109,6 +1110,9 @@ export default function App() {
         handleUpdateActiveProject({
           ...activeProject,
           content: updatedHtml,
+          editingNotes: activeProject.editingNotes?.length
+            ? reconcileNotesWithHtmlContent(updatedHtml, activeProject.editingNotes)
+            : activeProject.editingNotes,
           updatedAt: new Date().toISOString(),
           versionHistory: historyWithCheckpoint,
         });
@@ -1144,6 +1148,9 @@ export default function App() {
     handleUpdateActiveProject({
       ...activeProject,
       content: newContent,
+      editingNotes: activeProject.editingNotes?.length
+        ? reconcileNotesWithHtmlContent(newContent, activeProject.editingNotes)
+        : activeProject.editingNotes,
       updatedAt: new Date().toISOString(),
       versionHistory: historyWithCheckpoint,
     });
@@ -1203,6 +1210,9 @@ export default function App() {
     handleUpdateActiveProject({
       ...activeProject,
       content: res.updatedHtml,
+      editingNotes: activeProject.editingNotes?.length
+        ? reconcileNotesWithHtmlContent(res.updatedHtml, activeProject.editingNotes)
+        : activeProject.editingNotes,
       linkOpportunities: updatedOpportunities,
       versionHistory: historyWithCheckpoint,
     });
@@ -1267,6 +1277,9 @@ export default function App() {
     handleUpdateActiveProject({
       ...activeProject,
       content: currentHtml,
+      editingNotes: activeProject.editingNotes?.length
+        ? reconcileNotesWithHtmlContent(currentHtml, activeProject.editingNotes)
+        : activeProject.editingNotes,
       linkOpportunities: updatedOpportunities,
       versionHistory: historyWithCheckpoint,
     });
@@ -1362,6 +1375,9 @@ export default function App() {
     handleUpdateActiveProject({
       ...activeProject,
       content: newContent,
+      editingNotes: activeProject.editingNotes?.length
+        ? reconcileNotesWithHtmlContent(newContent, activeProject.editingNotes)
+        : activeProject.editingNotes,
       editorialReview: updatedReview,
       versionHistory: historyWithCheckpoint,
     });
@@ -1401,6 +1417,9 @@ export default function App() {
     handleUpdateActiveProject({
       ...activeProject,
       content: currentHtml,
+      editingNotes: activeProject.editingNotes?.length
+        ? reconcileNotesWithHtmlContent(currentHtml, activeProject.editingNotes)
+        : activeProject.editingNotes,
       editorialReview: updatedReview,
       versionHistory: historyWithCheckpoint,
     });
@@ -1499,6 +1518,9 @@ export default function App() {
     handleUpdateActiveProject({
       ...activeProject,
       content: newContent,
+      editingNotes: activeProject.editingNotes?.length
+        ? reconcileNotesWithHtmlContent(newContent, activeProject.editingNotes)
+        : activeProject.editingNotes,
       qualityControl: updatedQC,
       versionHistory: historyWithCheckpoint,
     });

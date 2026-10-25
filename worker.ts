@@ -1150,6 +1150,129 @@ export async function handleApiRequest(
       }, 400);
     }
 
+    // 18. POST /api/gemini/clean-transcript
+    if (pathname === '/api/gemini/clean-transcript' && request.method === 'POST') {
+      const ai = getAi();
+      const { rawTranscript = '', quotedText = '', paragraphContext = '' } = body;
+      const modelToUse = resolveModel(body.model, 'gemini-3.5-flash');
+
+      if (!rawTranscript || !String(rawTranscript).trim()) {
+        return jsonResponse({ ok: false, error: 'Empty transcript provided for cleanup.' }, 400);
+      }
+
+      const systemInstruction = `You are an editorial transcription assistant for "Science of Gifts".
+Your ONLY job is to clean up a spoken voice-note transcript in which an editor or author is describing a change they want to make to a selected passage in an article.
+STRICT RULES:
+1. Remove speech fillers ("um", "uh", "er", "ah", "you know", "I mean", conversational "like"), stutters, and false starts.
+2. Fix obvious speech-to-text transcription errors (especially words appearing in the selected passage), punctuation, and capitalization for clear readability.
+3. STRICTLY PRESERVE THE SPEAKER'S EXACT INTENT, MEANING, AND QUALIFICATIONS (such as "maybe", "if needed", "keep the second sentence", etc.).
+4. NEVER invent new requirements, NEVER rewrite the article passage itself, and NEVER change what the speaker asked for.
+Return ONLY valid JSON: { "cleanedTranscript": "string" }`;
+
+      const userPrompt = `SELECTED PASSAGE IN ARTICLE:\n"""\n${quotedText}\n"""\n${
+        paragraphContext ? `CONTAINING PARAGRAPH:\n"""\n${paragraphContext}\n"""\n` : ''
+      }RAW SPOKEN TRANSCRIPT:\n"""\n${rawTranscript}\n"""`;
+
+      const response = await ai.models.generateContent({
+        model: modelToUse,
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+
+      const text = response.text?.trim() || '{}';
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            parsed = JSON.parse(match[0]);
+          } catch {}
+        }
+      }
+
+      const cleanedTranscript = String(parsed.cleanedTranscript || rawTranscript).trim();
+      return jsonResponse({
+        ok: true,
+        cleanedTranscript,
+        modelUsed: modelToUse,
+      });
+    }
+
+    // 19. POST /api/gemini/transcribe-note
+    if (pathname === '/api/gemini/transcribe-note' && request.method === 'POST') {
+      const ai = getAi();
+      const { audioBase64 = '', mimeType = 'audio/webm', quotedText = '', paragraphContext = '' } = body;
+      const modelToUse = resolveModel(body.model, 'gemini-3.5-flash');
+
+      if (!audioBase64 || !String(audioBase64).trim()) {
+        return jsonResponse({ ok: false, error: 'No audio data provided for transcription.' }, 400);
+      }
+
+      const systemInstruction = `You are an editorial voice-note transcriber for "Science of Gifts".
+Transcribe the user's spoken editing note about the selected article passage.
+Provide:
+1. "rawTranscript": The verbatim transcription of what the speaker said.
+2. "cleanedTranscript": A cleaned version that removes speech fillers ("um", "uh", "er", "you know"), stutters, and false starts, fixes punctuation and obvious speech-to-text errors, while strictly preserving the speaker's exact editing instruction and qualifications without inventing anything.
+If the audio is silent or unintelligible, return empty strings for both fields.
+Return ONLY valid JSON: { "rawTranscript": "string", "cleanedTranscript": "string" }`;
+
+      const promptText = `SELECTED PASSAGE IN ARTICLE:\n"""\n${quotedText}\n"""\n${
+        paragraphContext ? `CONTAINING PARAGRAPH:\n"""\n${paragraphContext}\n"""\n` : ''
+      }Transcribe and clean the attached voice editing note.`;
+
+      const response = await ai.models.generateContent({
+        model: modelToUse,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  data: String(audioBase64),
+                  mimeType: String(mimeType || 'audio/webm'),
+                },
+              },
+              { text: promptText },
+            ],
+          },
+        ],
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+
+      const text = response.text?.trim() || '{}';
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            parsed = JSON.parse(match[0]);
+          } catch {}
+        }
+      }
+
+      const rawTranscript = String(parsed.rawTranscript || '').trim();
+      const cleanedTranscript = String(parsed.cleanedTranscript || rawTranscript).trim();
+
+      return jsonResponse({
+        ok: true,
+        rawTranscript,
+        cleanedTranscript,
+        modelUsed: modelToUse,
+      });
+    }
+
     // Route Not Found
     return jsonResponse({ ok: false, error: `Route ${pathname} not found` }, 404);
   } catch (err: any) {

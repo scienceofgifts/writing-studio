@@ -873,4 +873,116 @@ export const geminiService = {
       throw err;
     }
   },
+
+  /**
+   * Cleans up a spoken editing note transcript (removes fillers, stutters, and fixes punctuation)
+   * while strictly preserving the speaker's actual editing intent.
+   * Uses server-side Gemini when available and falls back to deterministic local cleanup.
+   */
+  async cleanVoiceTranscript(params: {
+    rawTranscript: string;
+    quotedText: string;
+    paragraphContext?: string;
+    useAiCleanup?: boolean;
+  }): Promise<{ ok: boolean; cleanedTranscript: string; usedAi: boolean }> {
+    const { cleanSpeechTranscriptLocally } = await import('../utils/editingNotes');
+    const localCleaned = cleanSpeechTranscriptLocally(params.rawTranscript);
+    if (!localCleaned) {
+      return { ok: false, cleanedTranscript: '', usedAi: false };
+    }
+
+    if (params.useAiCleanup === false) {
+      return { ok: true, cleanedTranscript: localCleaned, usedAi: false };
+    }
+
+    try {
+      const res = await fetch(getApiUrl('/api/gemini/clean-transcript'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawTranscript: params.rawTranscript,
+          quotedText: params.quotedText,
+          paragraphContext: params.paragraphContext || '',
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && typeof data.cleanedTranscript === 'string' && data.cleanedTranscript.trim()) {
+          return {
+            ok: true,
+            cleanedTranscript: data.cleanedTranscript.trim(),
+            usedAi: true,
+          };
+        }
+      }
+    } catch {
+      // Gracefully fall back to deterministic local cleanup when offline or API unavailable
+    }
+
+    return { ok: true, cleanedTranscript: localCleaned, usedAi: false };
+  },
+
+  /**
+   * Transcribes recorded audio blob (base64) via server-side Gemini multimodal endpoint
+   */
+  async transcribeVoiceNoteAudio(params: {
+    audioBase64: string;
+    mimeType: string;
+    quotedText: string;
+    paragraphContext?: string;
+  }): Promise<{ ok: boolean; rawTranscript: string; cleanedTranscript: string; error?: string }> {
+    const { cleanSpeechTranscriptLocally } = await import('../utils/editingNotes');
+    try {
+      const res = await fetch(getApiUrl('/api/gemini/transcribe-note'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioBase64: params.audioBase64,
+          mimeType: params.mimeType,
+          quotedText: params.quotedText,
+          paragraphContext: params.paragraphContext || '',
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return {
+          ok: false,
+          rawTranscript: '',
+          cleanedTranscript: '',
+          error: errData.error || `Transcription service returned ${res.status}`,
+        };
+      }
+
+      const data = await res.json();
+      if (!data.ok) {
+        return {
+          ok: false,
+          rawTranscript: '',
+          cleanedTranscript: '',
+          error: data.error || 'Could not transcribe audio recording.',
+        };
+      }
+
+      const raw = String(data.rawTranscript || '').trim();
+      const cleaned =
+        String(data.cleanedTranscript || '').trim() || cleanSpeechTranscriptLocally(raw);
+
+      return {
+        ok: Boolean(cleaned),
+        rawTranscript: raw,
+        cleanedTranscript: cleaned,
+        error: cleaned ? undefined : 'No speech was detected in the recording.',
+      };
+    } catch (err: any) {
+      return {
+        ok: false,
+        rawTranscript: '',
+        cleanedTranscript: '',
+        error: err?.message || 'Could not reach transcription service.',
+      };
+    }
+  },
 };
+

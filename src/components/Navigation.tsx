@@ -83,12 +83,14 @@ export const Navigation: React.FC<NavigationProps> = ({
   const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isPanelsMenuOpen, setIsPanelsMenuOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
 
   const libraryMenuRef = useRef<HTMLDivElement>(null);
   const newMenuRef = useRef<HTMLDivElement>(null);
   const panelsMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdowns when clicking outside
+  // Close dropdowns when clicking outside or pressing Escape
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (libraryMenuRef.current && !libraryMenuRef.current.contains(e.target as Node)) {
@@ -100,9 +102,23 @@ export const Navigation: React.FC<NavigationProps> = ({
       if (panelsMenuRef.current && !panelsMenuRef.current.contains(e.target as Node)) {
         setIsPanelsMenuOpen(false);
       }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setIsMoreMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsMoreMenuOpen(false);
+        setIsLibraryMenuOpen(false);
+        setIsNewMenuOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const handlePanelToggle = (panel: Exclude<ActivePanel, null>) => {
@@ -857,10 +873,10 @@ export const Navigation: React.FC<NavigationProps> = ({
             </div>
           </div>
 
-          {/* Desktop Tier 2 Layout (>= 768px, fully preserved) */}
-          <div className="hidden md:flex items-center justify-between gap-3">
-            {/* Left: Back Link, Save Status, Project Title */}
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {/* Desktop & Laptop Tier 2 Layout (>= 768px; mobile < 768px layout above is untouched) */}
+          <div className="hidden md:flex items-center justify-between gap-2 lg:gap-3 min-w-0">
+            {/* Left Fixed Controls: Back Link, Save Status, Explicit Save Button (shrink-0 so never obscured) */}
+            <div className="flex items-center gap-1.5 lg:gap-2.5 shrink-0">
               {/* Back to Project Category in Dashboard */}
               <button
                 type="button"
@@ -872,10 +888,10 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <span className="hidden sm:inline">{getBackLabel()}</span>
               </button>
 
-              <span className="text-[#c7bfaf] select-none shrink-0">•</span>
+              <span className="text-[#c7bfaf] select-none shrink-0 hidden lg:inline">•</span>
 
               {/* Save Status Indicator */}
-              <div className="px-2.5 py-0.5 bg-white/80 border border-[#dcd6ca] rounded-md shadow-2xs shrink-0 select-none">
+              <div className="px-2 lg:px-2.5 py-0.5 bg-white/80 border border-[#dcd6ca] rounded-md shadow-2xs shrink-0 select-none">
                 {getSaveIndicator()}
               </div>
 
@@ -894,12 +910,13 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <Save className={`w-3.5 h-3.5 ${saveStatus === 'unsaved' || saveStatus === 'cloud_save_failed' ? 'text-amber-300' : 'text-amber-800'}`} />
                 <span>Save</span>
               </button>
+            </div>
 
+            {/* Project Title: Visible where space permits, truncates gracefully without pushing or overlapping Save */}
+            <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
               <span className="text-[#c7bfaf] select-none shrink-0 hidden lg:inline">•</span>
-
-              {/* Current Project Title */}
               <span
-                className="font-editorial text-sm font-bold text-[#1e232a] truncate min-w-0 flex-1 hidden md:inline"
+                className="font-editorial text-sm font-bold text-[#1e232a] truncate min-w-0 flex-1"
                 title={activeProject.title || 'Untitled Draft'}
               >
                 {activeProject.title || 'Untitled Draft'}
@@ -908,13 +925,14 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             {/* Right: Mutually Exclusive Project Drawer Controls */}
             <div className="flex items-center gap-2 shrink-0">
-              <div className="flex items-center gap-1 bg-white/60 p-0.5 rounded-lg border border-[#dcd6ca] text-xs font-medium text-[#4a443b]">
+              <div className="flex items-center gap-0.5 lg:gap-1 bg-white/60 p-0.5 rounded-lg border border-[#dcd6ca] text-xs font-medium text-[#4a443b]">
+                {/* Secondary items inline only on wide desktop (2xl+); moved into More dropdown on narrower desktop/laptop */}
                 {/* Develop (Articles only) */}
                 {activeProject.type === 'article' && (
                   <button
                     type="button"
                     onClick={() => handlePanelToggle('develop')}
-                    className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
+                    className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
                       activePanel === 'develop'
                         ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                         : 'hover:bg-white hover:text-[#1e232a]'
@@ -926,7 +944,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                         activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'
                       }`}
                     />
-                    <span className="hidden md:inline">Develop</span>
+                    <span>Develop</span>
                   </button>
                 )}
 
@@ -934,7 +952,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('brief')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
+                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
                     activePanel === 'brief'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -946,14 +964,14 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'brief' ? 'text-amber-300' : 'text-amber-800'
                     }`}
                   />
-                  <span className="hidden md:inline">Brief</span>
+                  <span>Brief</span>
                 </button>
 
                 {/* Outline */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('outline')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
+                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
                     activePanel === 'outline'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -965,14 +983,14 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'
                     }`}
                   />
-                  <span className="hidden md:inline">Outline</span>
+                  <span>Outline</span>
                 </button>
 
                 {/* Draft Package (ChatGPT Handoff) */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('draft_package')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
+                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
                     activePanel === 'draft_package'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -984,14 +1002,14 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'
                     }`}
                   />
-                  <span className="hidden md:inline">Draft Package</span>
+                  <span>Draft Package</span>
                 </button>
 
                 {/* Controls */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('controls')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
+                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
                     activePanel === 'controls'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -1003,14 +1021,14 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'controls' ? 'text-amber-300' : 'text-amber-700'
                     }`}
                   />
-                  <span className="hidden md:inline">Controls</span>
+                  <span>Controls</span>
                 </button>
 
                 {/* Rules */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('rules')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
+                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
                     activePanel === 'rules'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -1022,14 +1040,14 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'rules' ? 'text-purple-300' : 'text-purple-800'
                     }`}
                   />
-                  <span className="hidden md:inline">Rules</span>
+                  <span>Rules</span>
                 </button>
 
                 {/* Instructions */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('instructions')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
+                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
                     activePanel === 'instructions'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -1041,14 +1059,33 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'instructions' ? 'text-amber-300' : 'text-amber-800'
                     }`}
                   />
-                  <span className="hidden lg:inline">Instructions</span>
+                  <span>Instructions</span>
                 </button>
 
-                {/* Research (Requirement #8) */}
+                {/* Priority Item: Links (Always directly visible on >= 768px) */}
+                <button
+                  type="button"
+                  onClick={() => handlePanelToggle('links')}
+                  className={`px-2 lg:px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none cursor-pointer ${
+                    activePanel === 'links'
+                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
+                      : 'hover:bg-white hover:text-[#1e232a]'
+                  }`}
+                  title="Editorial Internal Link Opportunities"
+                >
+                  <Link2
+                    className={`w-3.5 h-3.5 ${
+                      activePanel === 'links' ? 'text-blue-300' : 'text-blue-800'
+                    }`}
+                  />
+                  <span>Links</span>
+                </button>
+
+                {/* Priority Item: Research (Always directly visible on >= 768px) */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('research')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none relative ${
+                  className={`px-2 lg:px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none relative cursor-pointer ${
                     activePanel === 'research'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -1060,7 +1097,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'research' ? 'text-amber-300' : 'text-amber-800'
                     }`}
                   />
-                  <span className="hidden lg:inline">Research</span>
+                  <span>Research</span>
                   {activeProject.attachedStudyIds && activeProject.attachedStudyIds.length > 0 && (
                     <span
                       className={`px-1 py-0.2 rounded-full text-[10px] font-bold ${
@@ -1074,30 +1111,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                   )}
                 </button>
 
-                {/* Links */}
-                <button
-                  type="button"
-                  onClick={() => handlePanelToggle('links')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none ${
-                    activePanel === 'links'
-                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                      : 'hover:bg-white hover:text-[#1e232a]'
-                  }`}
-                  title="Editorial Internal Link Opportunities"
-                >
-                  <Link2
-                    className={`w-3.5 h-3.5 ${
-                      activePanel === 'links' ? 'text-blue-300' : 'text-blue-800'
-                    }`}
-                  />
-                  <span className="hidden lg:inline">Links</span>
-                </button>
-
-                {/* Review */}
+                {/* Priority Item: Review (Always directly visible on >= 768px) */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('review')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none relative ${
+                  className={`px-2 lg:px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none relative cursor-pointer ${
                     activePanel === 'review'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -1117,11 +1135,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                     )}
                 </button>
 
-                {/* Quality Control (Phase 8) */}
+                {/* Priority Item: Quality Control (Always directly visible on >= 768px) */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('qc')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none relative ${
+                  className={`px-2 lg:px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none relative cursor-pointer ${
                     activePanel === 'qc'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -1147,11 +1165,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                   )}
                 </button>
 
-                {/* Version History (Phase 9) */}
+                {/* Version History (Inline on 2xl+, inside More dropdown below 2xl) */}
                 <button
                   type="button"
                   onClick={() => handlePanelToggle('history')}
-                  className={`px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none relative ${
+                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none relative cursor-pointer ${
                     activePanel === 'history'
                       ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
                       : 'hover:bg-white hover:text-[#1e232a]'
@@ -1163,13 +1181,295 @@ export const Navigation: React.FC<NavigationProps> = ({
                       activePanel === 'history' ? 'text-indigo-300' : 'text-indigo-700'
                     }`}
                   />
-                  <span className="hidden sm:inline">History</span>
+                  <span>History</span>
                   {activeProject.versionHistory && activeProject.versionHistory.length > 0 && (
                     <span className="text-[10px] opacity-75 font-mono">
                       ({activeProject.versionHistory.length})
                     </span>
                   )}
                 </button>
+
+                {/* More Dropdown for Secondary Navigation Items on Laptop/Narrow Desktop (< 2xl) */}
+                <div className="relative 2xl:hidden" ref={moreMenuRef}>
+                  {(() => {
+                    const isSecondaryActive =
+                      activePanel === 'develop' ||
+                      activePanel === 'brief' ||
+                      activePanel === 'outline' ||
+                      activePanel === 'draft_package' ||
+                      activePanel === 'controls' ||
+                      activePanel === 'rules' ||
+                      activePanel === 'instructions' ||
+                      activePanel === 'history';
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+                        aria-expanded={isMoreMenuOpen}
+                        aria-haspopup="menu"
+                        className={`px-2 lg:px-2.5 py-1 rounded-md transition-colors inline-flex items-center gap-1 select-none cursor-pointer ${
+                          isSecondaryActive
+                            ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
+                            : isMoreMenuOpen
+                            ? 'bg-white text-[#1e232a] shadow-2xs font-semibold'
+                            : 'hover:bg-white hover:text-[#1e232a]'
+                        }`}
+                        title="More studio sections (Develop, Brief, Outline, Draft Package, Controls, Rules, Instructions, History)"
+                      >
+                        <MoreHorizontal
+                          className={`w-3.5 h-3.5 ${
+                            isSecondaryActive ? 'text-amber-300' : 'text-[#5c5447]'
+                          }`}
+                        />
+                        <span>More</span>
+                        <ChevronDown
+                          className={`w-3 h-3 transition-transform ${
+                            isSecondaryActive ? 'text-amber-200' : 'text-[#787166]'
+                          } ${isMoreMenuOpen ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                    );
+                  })()}
+
+                  {isMoreMenuOpen && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 mt-1.5 w-60 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto"
+                    >
+                      <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] border-b border-[#f0ede6] mb-1">
+                        Studio Sections
+                      </div>
+
+                      {activeProject.type === 'article' && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setIsMoreMenuOpen(false);
+                            handlePanelToggle('develop');
+                          }}
+                          className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                            activePanel === 'develop'
+                              ? 'bg-[#1e232a] text-white font-semibold'
+                              : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Compass
+                              className={`w-3.5 h-3.5 shrink-0 ${
+                                activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'
+                              }`}
+                            />
+                            <span>Develop</span>
+                          </div>
+                          {activePanel === 'develop' && (
+                            <span className="text-[10px] text-amber-200 font-medium">Active</span>
+                          )}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          handlePanelToggle('brief');
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          activePanel === 'brief'
+                            ? 'bg-[#1e232a] text-white font-semibold'
+                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Compass
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              activePanel === 'brief' ? 'text-amber-300' : 'text-amber-800'
+                            }`}
+                          />
+                          <span>Brief</span>
+                        </div>
+                        {activePanel === 'brief' && (
+                          <span className="text-[10px] text-amber-200 font-medium">Active</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          handlePanelToggle('outline');
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          activePanel === 'outline'
+                            ? 'bg-[#1e232a] text-white font-semibold'
+                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <ListOrdered
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'
+                            }`}
+                          />
+                          <span>Outline</span>
+                        </div>
+                        {activeProject.outline && activeProject.outline.length > 0 && (
+                          <span
+                            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                              activePanel === 'outline'
+                                ? 'bg-blue-800 text-blue-100'
+                                : 'bg-blue-50 text-blue-900 border border-blue-200'
+                            }`}
+                          >
+                            {activeProject.outline.length}
+                          </span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          handlePanelToggle('draft_package');
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          activePanel === 'draft_package'
+                            ? 'bg-[#1e232a] text-white font-semibold'
+                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Sparkles
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'
+                            }`}
+                          />
+                          <span>Draft Package</span>
+                        </div>
+                        {activePanel === 'draft_package' && (
+                          <span className="text-[10px] text-amber-200 font-medium">Active</span>
+                        )}
+                      </button>
+
+                      <div className="border-t border-[#f0ede6] my-1"></div>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          handlePanelToggle('controls');
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          activePanel === 'controls'
+                            ? 'bg-[#1e232a] text-white font-semibold'
+                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Sparkles
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              activePanel === 'controls' ? 'text-amber-300' : 'text-amber-700'
+                            }`}
+                          />
+                          <span>Controls</span>
+                        </div>
+                        {activePanel === 'controls' && (
+                          <span className="text-[10px] text-amber-200 font-medium">Active</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          handlePanelToggle('rules');
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          activePanel === 'rules'
+                            ? 'bg-[#1e232a] text-white font-semibold'
+                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Scale
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              activePanel === 'rules' ? 'text-purple-300' : 'text-purple-800'
+                            }`}
+                          />
+                          <span>Rules</span>
+                        </div>
+                        {activePanel === 'rules' && (
+                          <span className="text-[10px] text-purple-200 font-medium">Active</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          handlePanelToggle('instructions');
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          activePanel === 'instructions'
+                            ? 'bg-[#1e232a] text-white font-semibold'
+                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <FileText
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              activePanel === 'instructions' ? 'text-amber-300' : 'text-amber-800'
+                            }`}
+                          />
+                          <span>Instructions</span>
+                        </div>
+                        {activePanel === 'instructions' && (
+                          <span className="text-[10px] text-amber-200 font-medium">Active</span>
+                        )}
+                      </button>
+
+                      <div className="border-t border-[#f0ede6] my-1"></div>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          handlePanelToggle('history');
+                        }}
+                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          activePanel === 'history'
+                            ? 'bg-[#1e232a] text-white font-semibold'
+                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <History
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              activePanel === 'history' ? 'text-indigo-300' : 'text-indigo-700'
+                            }`}
+                          />
+                          <span>History</span>
+                        </div>
+                        {activeProject.versionHistory && activeProject.versionHistory.length > 0 && (
+                          <span
+                            className={`text-[10px] font-mono ${
+                              activePanel === 'history' ? 'text-indigo-200' : 'text-[#736c61]'
+                            }`}
+                          >
+                            ({activeProject.versionHistory.length})
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

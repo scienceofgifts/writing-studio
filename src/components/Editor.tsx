@@ -65,7 +65,32 @@ import {
   Clock,
   ChevronDown,
   BookOpen,
+  Mic,
+  PenLine,
+  Eye,
+  EyeOff,
+  MessageSquare,
+  AlertTriangle,
 } from 'lucide-react';
+import {
+  ArticleEditingNote,
+  EditingNoteInputMethod,
+  WritingProject,
+} from '../types/project';
+import {
+  extractSelectionAnchorFromDoc,
+  mapAndResolveNotesInDoc,
+  sortEditingNotesInArticleOrder,
+  SelectionAnchorCapture,
+} from '../utils/editingNotes';
+import {
+  EditingNotesExtension,
+  editingNotesPluginKey,
+} from './editingNotes/EditingNotesExtension';
+import { EditingNoteModal } from './editingNotes/EditingNoteModal';
+import { EditingNotePopover } from './editingNotes/EditingNotePopover';
+import { ExportEditingBriefModal } from './editingNotes/ExportEditingBriefModal';
+import { toast } from '../services/toastService';
 
 export interface AiActionOption {
   id: string;
@@ -76,6 +101,11 @@ export interface AiActionOption {
 interface EditorProps {
   content: string; // Semantic HTML document
   projectId?: string;
+  project?: WritingProject;
+  editingNotes?: ArticleEditingNote[];
+  onEditingNotesChange?: (updatedNotes: ArticleEditingNote[]) => void;
+  onChangeWithNotes?: (newHtml: string, updatedNotes: ArticleEditingNote[]) => void;
+  onOpenExportBrief?: () => void;
   restoreTrigger?: number | string;
   onChange: (newHtml: string) => void;
   onSelectionChange?: (selectedText: string, range: { start: number; end: number }) => void;
@@ -87,6 +117,11 @@ interface EditorProps {
 export const Editor: React.FC<EditorProps> = ({
   content,
   projectId,
+  project,
+  editingNotes: propEditingNotes,
+  onEditingNotesChange,
+  onChangeWithNotes,
+  onOpenExportBrief,
   restoreTrigger,
   onChange,
   onSelectionChange,
@@ -101,6 +136,41 @@ export const Editor: React.FC<EditorProps> = ({
   const [linkDisplayText, setLinkDisplayText] = useState('');
   const [activeBlockType, setActiveBlockType] = useState('paragraph');
 
+  // Editing Notes UI State
+  const editingNotes = propEditingNotes ?? project?.editingNotes ?? [];
+  const [showEditingNotes, setShowEditingNotes] = useState<boolean>(true);
+  const [activePopoverNoteId, setActivePopoverNoteId] = useState<string | null>(null);
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState<boolean>(false);
+  const [noteModalMode, setNoteModalMode] = useState<EditingNoteInputMethod>('voice');
+  const [capturedAnchor, setCapturedAnchor] = useState<SelectionAnchorCapture | null>(null);
+  const [editingTargetNote, setEditingTargetNote] = useState<ArticleEditingNote | null>(null);
+  const [isExportBriefModalOpen, setIsExportBriefModalOpen] = useState<boolean>(false);
+
+  // Refs for synchronous access inside ProseMirror decoration plugin & transaction handlers
+  const editingNotesRef = useRef<ArticleEditingNote[]>(editingNotes);
+  editingNotesRef.current = editingNotes;
+
+  const showEditingNotesRef = useRef<boolean>(showEditingNotes);
+  showEditingNotesRef.current = showEditingNotes;
+
+  const activePopoverNoteIdRef = useRef<string | null>(activePopoverNoteId);
+  activePopoverNoteIdRef.current = activePopoverNoteId;
+
+  const lockedSelectionRef = useRef<{ from: number; to: number } | null>(null);
+  lockedSelectionRef.current =
+    isNoteModalOpen && capturedAnchor
+      ? { from: capturedAnchor.from, to: capturedAnchor.to }
+      : null;
+
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const onEditingNotesChangeRef = useRef(onEditingNotesChange);
+  onEditingNotesChangeRef.current = onEditingNotesChange;
+
+  const onChangeWithNotesRef = useRef(onChangeWithNotes);
+  onChangeWithNotesRef.current = onChangeWithNotes;
+
   // Track project ID and restore triggers via refs to break autosave feedback loops
   const currentProjectIdRef = useRef<string | undefined>(projectId);
   const prevRestoreTriggerRef = useRef<number | string | undefined>(restoreTrigger);
@@ -114,6 +184,7 @@ export const Editor: React.FC<EditorProps> = ({
   const aiMenuRef = useRef<HTMLDivElement>(null);
   const linkPopoverRef = useRef<HTMLDivElement>(null);
   const imagePopoverRef = useRef<HTMLDivElement>(null);
+  const notePopoverRef = useRef<HTMLDivElement>(null);
 
   const editor = useEditor({
     extensions: [
@@ -138,6 +209,17 @@ export const Editor: React.FC<EditorProps> = ({
         },
       }),
       CustomSuperscript,
+      EditingNotesExtension.configure({
+        getState: () => ({
+          notes: editingNotesRef.current,
+          showNotes: showEditingNotesRef.current,
+          activeNoteId: activePopoverNoteIdRef.current,
+          lockedSelection: lockedSelectionRef.current,
+        }),
+        onSelectNote: (noteId) => {
+          setActivePopoverNoteId((prev) => (prev === noteId ? null : noteId));
+        },
+      }),
     ],
     content,
     editorProps: {
@@ -145,9 +227,31 @@ export const Editor: React.FC<EditorProps> = ({
         class: 'focus:outline-hidden min-h-[420px] px-2 py-4',
       },
     },
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor, transaction }) => {
       const html = editor.getHTML();
-      onChange(html);
+      const currentNotes = editingNotesRef.current;
+
+      if (currentNotes && currentNotes.length > 0) {
+        const { updatedNotes, changed } = mapAndResolveNotesInDoc(
+          editor.state.doc,
+          currentNotes,
+          transaction.mapping
+        );
+        if (changed) {
+          editingNotesRef.current = updatedNotes;
+        }
+        if (onChangeWithNotesRef.current) {
+          onChangeWithNotesRef.current(html, updatedNotes);
+          return;
+        }
+        onChangeRef.current(html);
+        if (changed && onEditingNotesChangeRef.current) {
+          onEditingNotesChangeRef.current(updatedNotes);
+        }
+        return;
+      }
+
+      onChangeRef.current(html);
     },
     onSelectionUpdate: ({ editor }) => {
       // Update block type selector without triggering any popup
@@ -173,6 +277,14 @@ export const Editor: React.FC<EditorProps> = ({
     },
   });
 
+  // Refresh ProseMirror decorations whenever notes, visibility toggle, active popover, or locked selection change
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    try {
+      editor.view.dispatch(editor.state.tr.setMeta(editingNotesPluginKey, true));
+    } catch {}
+  }, [editor, editingNotes, showEditingNotes, activePopoverNoteId, isNoteModalOpen, capturedAnchor]);
+
   // Expose editor to parent if needed
   useEffect(() => {
     if (editorRef) {
@@ -185,7 +297,24 @@ export const Editor: React.FC<EditorProps> = ({
     if (!editor) return;
     if (projectId && projectId !== currentProjectIdRef.current) {
       currentProjectIdRef.current = projectId;
+      setActivePopoverNoteId(null);
+      setIsNoteModalOpen(false);
+      setCapturedAnchor(null);
+      setEditingTargetNote(null);
       editor.commands.setContent(content || '', { emitUpdate: false });
+      // Re-verify note anchors against newly loaded project document without emitting dirty update
+      if (editingNotesRef.current.length > 0) {
+        const { updatedNotes, changed } = mapAndResolveNotesInDoc(
+          editor.state.doc,
+          editingNotesRef.current
+        );
+        if (changed) {
+          editingNotesRef.current = updatedNotes;
+        }
+        try {
+          editor.view.dispatch(editor.state.tr.setMeta(editingNotesPluginKey, true));
+        } catch {}
+      }
     }
   }, [projectId, content, editor]);
 
@@ -195,6 +324,16 @@ export const Editor: React.FC<EditorProps> = ({
     if (restoreTrigger !== undefined && restoreTrigger !== prevRestoreTriggerRef.current) {
       prevRestoreTriggerRef.current = restoreTrigger;
       editor.commands.setContent(content || '', { emitUpdate: false });
+      if (editingNotesRef.current.length > 0) {
+        const { updatedNotes, changed } = mapAndResolveNotesInDoc(
+          editor.state.doc,
+          editingNotesRef.current
+        );
+        if (changed && onEditingNotesChangeRef.current) {
+          editingNotesRef.current = updatedNotes;
+          onEditingNotesChangeRef.current(updatedNotes);
+        }
+      }
     }
   }, [restoreTrigger, content, editor]);
 
@@ -207,6 +346,16 @@ export const Editor: React.FC<EditorProps> = ({
       }
       if (typeof e.detail?.content === 'string') {
         editor.commands.setContent(e.detail.content, { emitUpdate: false });
+        if (editingNotesRef.current.length > 0) {
+          const { updatedNotes, changed } = mapAndResolveNotesInDoc(
+            editor.state.doc,
+            editingNotesRef.current
+          );
+          if (changed && onEditingNotesChangeRef.current) {
+            editingNotesRef.current = updatedNotes;
+            onEditingNotesChangeRef.current(updatedNotes);
+          }
+        }
       }
     };
 
@@ -228,6 +377,13 @@ export const Editor: React.FC<EditorProps> = ({
       if (imagePopoverRef.current && !imagePopoverRef.current.contains(e.target as Node)) {
         setIsImagePromptOpen(false);
       }
+      if (
+        notePopoverRef.current &&
+        !notePopoverRef.current.contains(e.target as Node) &&
+        !(e.target as HTMLElement)?.closest?.('[data-editing-note-marker]')
+      ) {
+        setActivePopoverNoteId(null);
+      }
     };
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
@@ -241,10 +397,148 @@ export const Editor: React.FC<EditorProps> = ({
     );
   }
 
-  // Get current selection info for deliberate AI button
+  // Get current selection info for deliberate AI button & note attachment
   const { from, to } = editor.state.selection;
   const selectedText = editor.state.doc.textBetween(from, to, ' ').trim();
   const selectedWordCount = selectedText ? selectedText.split(/\s+/).filter(Boolean).length : 0;
+
+  const orderedNotes = sortEditingNotesInArticleOrder(editingNotes);
+  const activePopoverNoteIndex = orderedNotes.findIndex((n) => n.id === activePopoverNoteId);
+  const activePopoverNote =
+    activePopoverNoteIndex >= 0 ? orderedNotes[activePopoverNoteIndex] : null;
+  const unresolvedOrAmbiguousCount = orderedNotes.filter(
+    (n) => n.anchorStatus === 'unresolved' || n.anchorStatus === 'ambiguous'
+  ).length;
+
+  // Open Note Modal for current selection
+  const handleStartAttachNote = (mode: EditingNoteInputMethod) => {
+    const { from: selFrom, to: selTo } = editor.state.selection;
+    const capture = extractSelectionAnchorFromDoc(editor.state.doc, selFrom, selTo);
+    if (!capture) {
+      toast.info(
+        'Select a Passage First',
+        'Highlight a word, sentence, or paragraph in the article to attach an editing note.'
+      );
+      return;
+    }
+    setCapturedAnchor(capture);
+    setEditingTargetNote(null);
+    setNoteModalMode(mode);
+    setActivePopoverNoteId(null);
+    setIsNoteModalOpen(true);
+  };
+
+  // Confirm creating or updating a note
+  const handleConfirmNote = (data: {
+    instruction: string;
+    rawTranscript?: string;
+    inputMethod: EditingNoteInputMethod;
+  }) => {
+    const nowIso = new Date().toISOString();
+
+    if (editingTargetNote) {
+      const updatedList = editingNotes.map((n) =>
+        n.id === editingTargetNote.id
+          ? {
+              ...n,
+              instruction: data.instruction,
+              rawTranscript: data.rawTranscript ?? n.rawTranscript,
+              inputMethod: data.inputMethod,
+              updatedAt: nowIso,
+            }
+          : n
+      );
+      editingNotesRef.current = updatedList;
+      onEditingNotesChange?.(updatedList);
+      setIsNoteModalOpen(false);
+      setEditingTargetNote(null);
+      setCapturedAnchor(null);
+      toast.success('Editing Note Updated', 'Your note has been updated. Click Save to commit.');
+      return;
+    }
+
+    if (!capturedAnchor) return;
+
+    const newNote: ArticleEditingNote = {
+      id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      projectId: projectId || project?.id || 'default',
+      quotedText: capturedAnchor.quotedText,
+      paragraphContext: capturedAnchor.paragraphContext,
+      headingContext: capturedAnchor.headingContext,
+      prefixContext: capturedAnchor.prefixContext,
+      suffixContext: capturedAnchor.suffixContext,
+      from: capturedAnchor.from,
+      to: capturedAnchor.to,
+      instruction: data.instruction,
+      rawTranscript: data.rawTranscript,
+      inputMethod: data.inputMethod,
+      anchorStatus: 'resolved',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const nextNotes = [...editingNotes, newNote];
+    const { updatedNotes } = mapAndResolveNotesInDoc(editor.state.doc, nextNotes);
+    editingNotesRef.current = updatedNotes;
+    onEditingNotesChange?.(updatedNotes);
+    setShowEditingNotes(true);
+    setIsNoteModalOpen(false);
+    setCapturedAnchor(null);
+    toast.success(
+      'Editing Note Attached',
+      `Attached ${data.inputMethod === 'voice' ? 'voice' : 'written'} note to passage. Click Save to commit.`
+    );
+  };
+
+  const handleDeleteNote = (noteId: string) => {
+    const updatedList = editingNotes.filter((n) => n.id !== noteId);
+    editingNotesRef.current = updatedList;
+    onEditingNotesChange?.(updatedList);
+    if (activePopoverNoteId === noteId) {
+      setActivePopoverNoteId(null);
+    }
+    toast.info('Note Removed', 'Editing note deleted. Click Save to commit.');
+  };
+
+  const handleReanchorNoteToSelection = (noteToReanchor: ArticleEditingNote) => {
+    const { from: selFrom, to: selTo } = editor.state.selection;
+    const capture = extractSelectionAnchorFromDoc(editor.state.doc, selFrom, selTo);
+    if (!capture) {
+      toast.info('Select Text First', 'Highlight the passage you want to re-anchor this note to.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const updatedList = editingNotes.map((n) =>
+      n.id === noteToReanchor.id
+        ? {
+            ...n,
+            quotedText: capture.quotedText,
+            paragraphContext: capture.paragraphContext,
+            headingContext: capture.headingContext,
+            prefixContext: capture.prefixContext,
+            suffixContext: capture.suffixContext,
+            from: capture.from,
+            to: capture.to,
+            anchorStatus: 'resolved' as const,
+            updatedAt: nowIso,
+          }
+        : n
+    );
+    editingNotesRef.current = updatedList;
+    onEditingNotesChange?.(updatedList);
+    toast.success('Note Re-anchored', 'Attached note to the selected passage.');
+  };
+
+  const handleToggleShowNotes = () => {
+    setShowEditingNotes((prev) => {
+      const next = !prev;
+      if (!next) {
+        setActivePopoverNoteId(null);
+      }
+      return next;
+    });
+  };
 
   // Block style change
   const handleBlockChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -744,8 +1038,89 @@ export const Editor: React.FC<EditorProps> = ({
           </button>
         </div>
 
-        {/* Right: Explicit AI Edit & Focus Mode */}
-        <div className="flex items-center gap-2">
+        {/* Right: Contextual Voice/Write Note Actions, Show/Hide Notes Toggle, AI Edit & Focus Mode */}
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+          {/* Contextual Selection Actions: Voice Note & Write Note */}
+          {selectedWordCount > 0 && (
+            <div className="inline-flex items-center gap-1 bg-amber-50/90 border border-amber-300 rounded-lg p-0.5 shadow-2xs animate-in fade-in duration-100">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleStartAttachNote('voice')}
+                className="px-2 py-1 text-xs font-semibold text-amber-950 hover:bg-amber-200/80 rounded-md transition-colors inline-flex items-center gap-1 cursor-pointer"
+                title="Record a voice editing note anchored to the selected passage"
+              >
+                <Mic className="w-3.5 h-3.5 text-amber-800" />
+                <span>Voice Note</span>
+              </button>
+              <div className="h-3.5 w-px bg-amber-300" />
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleStartAttachNote('text')}
+                className="px-2 py-1 text-xs font-semibold text-amber-950 hover:bg-amber-200/80 rounded-md transition-colors inline-flex items-center gap-1 cursor-pointer"
+                title="Write a text editing note anchored to the selected passage"
+              >
+                <PenLine className="w-3.5 h-3.5 text-amber-800" />
+                <span>Write Note</span>
+              </button>
+            </div>
+          )}
+
+          {/* Global Show / Hide Editing Notes Toggle */}
+          {orderedNotes.length > 0 && (
+            <button
+              type="button"
+              onClick={handleToggleShowNotes}
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer ${
+                showEditingNotes
+                  ? 'bg-amber-100/90 text-amber-950 border-amber-300 hover:bg-amber-200/80'
+                  : 'bg-white text-[#5c5447] border-[#dcd6ca] hover:bg-[#ede8dc]'
+              }`}
+              title={
+                showEditingNotes
+                  ? 'Hide inline editing note markers for clean reading'
+                  : 'Show inline editing note markers'
+              }
+            >
+              {showEditingNotes ? (
+                <Eye className="w-3.5 h-3.5 text-amber-800" />
+              ) : (
+                <EyeOff className="w-3.5 h-3.5 text-[#736c61]" />
+              )}
+              <span className="hidden sm:inline">
+                {showEditingNotes ? 'Hide Notes' : 'Show Notes'}
+              </span>
+              <span className="px-1.5 py-0.2 rounded-full bg-white/90 text-[#1e232a] border border-amber-300 text-[10px] font-bold">
+                {orderedNotes.length}
+              </span>
+              {unresolvedOrAmbiguousCount > 0 && (
+                <span title={`${unresolvedOrAmbiguousCount} note(s) need attention`} className="inline-flex">
+                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Export Consolidated Editing Brief Button */}
+          {orderedNotes.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenExportBrief) {
+                  onOpenExportBrief();
+                } else {
+                  setIsExportBriefModalOpen(true);
+                }
+              }}
+              className="px-2.5 py-1.5 text-xs font-semibold text-white bg-[#1e232a] hover:bg-[#2d3440] border border-[#1e232a] rounded-lg transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer"
+              title="Export consolidated article editing brief for ChatGPT or Claude"
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-amber-300" />
+              <span className="hidden sm:inline">Export Brief</span>
+            </button>
+          )}
+
           {/* Explicit AI Edit Menu (Activated ONLY on deliberate click) */}
           <div className="relative" ref={aiMenuRef}>
             <button
@@ -812,10 +1187,107 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
       </div>
 
-      {/* Real Rich-Text Document Body */}
-      <div className="flex-1 min-h-0 p-3 sm:p-5 md:p-8 overflow-y-auto">
+      {/* Real Rich-Text Document Body & Active Note Popover */}
+      <div className="flex-1 min-h-0 p-3 sm:p-5 md:p-8 overflow-y-auto relative">
         <EditorContent editor={editor} />
+
+        {/* Active Note Popover (Anchored Floating Panel) */}
+        {showEditingNotes && activePopoverNote && (
+          <div
+            ref={notePopoverRef}
+            className="sticky bottom-4 right-4 ml-auto z-40 max-w-md w-full pt-2"
+          >
+            <EditingNotePopover
+              note={activePopoverNote}
+              noteNumber={activePopoverNoteIndex + 1}
+              hasActiveSelection={selectedWordCount > 0}
+              onEdit={(noteToEdit) => {
+                setEditingTargetNote(noteToEdit);
+                setCapturedAnchor({
+                  quotedText: noteToEdit.quotedText,
+                  paragraphContext: noteToEdit.paragraphContext,
+                  headingContext: noteToEdit.headingContext,
+                  prefixContext: noteToEdit.prefixContext,
+                  suffixContext: noteToEdit.suffixContext,
+                  from: noteToEdit.from,
+                  to: noteToEdit.to,
+                });
+                setNoteModalMode(noteToEdit.inputMethod);
+                setIsNoteModalOpen(true);
+              }}
+              onDelete={handleDeleteNote}
+              onReanchorToSelection={handleReanchorNoteToSelection}
+              onClose={() => setActivePopoverNoteId(null)}
+            />
+          </div>
+        )}
       </div>
+
+      {/* Unobtrusive Editing Notes Tray (Visible when showEditingNotes is true & notes exist) */}
+      {showEditingNotes && orderedNotes.length > 0 && (
+        <div className="px-3 sm:px-5 py-2 bg-[#f7f4ec] border-t border-[#e5dfd3] flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#736c61] mr-1">
+              Editing Notes ({orderedNotes.length}):
+            </span>
+            {orderedNotes.map((note, idx) => {
+              const num = idx + 1;
+              const isSelected = activePopoverNoteId === note.id;
+              const isUnresolved = note.anchorStatus === 'unresolved';
+              const isAmbiguous = note.anchorStatus === 'ambiguous';
+              return (
+                <button
+                  key={note.id}
+                  type="button"
+                  onClick={() => {
+                    setActivePopoverNoteId((prev) => (prev === note.id ? null : note.id));
+                    if (!isUnresolved && note.from > 0) {
+                      try {
+                        editor.commands.setTextSelection({ from: note.from, to: note.to });
+                      } catch {}
+                    }
+                  }}
+                  className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border transition-colors inline-flex items-center gap-1 cursor-pointer max-w-[190px] truncate ${
+                    isSelected
+                      ? 'bg-[#1e232a] text-white border-[#1e232a]'
+                      : isUnresolved
+                      ? 'bg-rose-50 text-rose-900 border-rose-300 hover:bg-rose-100'
+                      : isAmbiguous
+                      ? 'bg-amber-100 text-amber-950 border-amber-400 hover:bg-amber-200'
+                      : 'bg-white text-[#2d333b] border-[#dcd6ca] hover:bg-[#ede8dc]'
+                  }`}
+                  title={`Note #${num}${
+                    isUnresolved
+                      ? ' (Needs attention — original passage edited/removed)'
+                      : isAmbiguous
+                      ? ' (Ambiguous anchor — multiple matches)'
+                      : ''
+                  }: "${note.quotedText}" — ${note.instruction}`}
+                >
+                  <span>#{num}</span>
+                  {isUnresolved && <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />}
+                  {isAmbiguous && <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0" />}
+                  <span className="truncate">{note.quotedText}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenExportBrief) {
+                onOpenExportBrief();
+              } else {
+                setIsExportBriefModalOpen(true);
+              }
+            }}
+            className="text-[11px] font-bold text-amber-900 hover:text-amber-950 underline cursor-pointer shrink-0"
+          >
+            Export Consolidated Brief →
+          </button>
+        </div>
+      )}
 
       {/* Metrics Footer */}
       <div className="px-3 sm:px-5 py-2 bg-[#f5f2ea]/70 border-t border-[#e8e4db] flex items-center justify-between text-xs text-[#736c61] rounded-b-xl">
@@ -834,12 +1306,63 @@ export const Editor: React.FC<EditorProps> = ({
           </span>
         </div>
 
-        {selectedWordCount > 0 && (
-          <span className="text-[#615a50] text-[11px]">
-            {selectedWordCount} words highlighted
+        {selectedWordCount > 0 ? (
+          <div className="flex items-center gap-2">
+            <span className="text-[#615a50] text-[11px]">
+              {selectedWordCount} words highlighted
+            </span>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleStartAttachNote('voice')}
+              className="text-[11px] font-semibold text-amber-900 hover:underline inline-flex items-center gap-1 cursor-pointer"
+            >
+              <Mic className="w-3 h-3" />
+              <span>+ Voice Note</span>
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleStartAttachNote('text')}
+              className="text-[11px] font-semibold text-amber-900 hover:underline inline-flex items-center gap-1 cursor-pointer"
+            >
+              <PenLine className="w-3 h-3" />
+              <span>+ Write Note</span>
+            </button>
+          </div>
+        ) : (
+          <span className="text-[11px] text-[#8a8275] hidden sm:inline">
+            Select any passage to attach a Voice Note or Write Note
           </span>
         )}
       </div>
+
+      {/* Create / Edit Note Modal */}
+      <EditingNoteModal
+        isOpen={isNoteModalOpen}
+        initialMode={noteModalMode}
+        anchorCapture={capturedAnchor}
+        existingNote={editingTargetNote}
+        onConfirm={handleConfirmNote}
+        onCancel={() => {
+          setIsNoteModalOpen(false);
+          setEditingTargetNote(null);
+          setCapturedAnchor(null);
+        }}
+      />
+
+      {/* Export Consolidated Editing Brief Modal (when opened directly from Editor) */}
+      {project && (
+        <ExportEditingBriefModal
+          isOpen={isExportBriefModalOpen}
+          project={{
+            ...project,
+            content: editor.getHTML(),
+            editingNotes,
+          }}
+          onClose={() => setIsExportBriefModalOpen(false)}
+        />
+      )}
     </div>
   );
 };

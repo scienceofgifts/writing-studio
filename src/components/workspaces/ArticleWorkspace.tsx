@@ -33,6 +33,7 @@ import {
 } from '../../services/articleExport';
 import { ArticleInfoDrawer } from '../drawers/ArticleInfoDrawer';
 import { ExportValidationModal } from '../ExportValidationModal';
+import { ExportEditingBriefModal } from '../editingNotes/ExportEditingBriefModal';
 import {
   Sparkles,
   BookOpen,
@@ -49,6 +50,7 @@ import {
   Scale,
   ClipboardCheck,
   History,
+  MessageSquareQuote,
 } from 'lucide-react';
 
 interface ArticleWorkspaceProps {
@@ -88,6 +90,7 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isInfoDrawerOpen, setIsInfoDrawerOpen] = useState(false);
   const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
+  const [isEditingBriefModalOpen, setIsEditingBriefModalOpen] = useState(false);
   const [pendingExportFormat, setPendingExportFormat] = useState<
     'cms_json' | 'markdown' | 'copy_json'
   >('cms_json');
@@ -299,8 +302,8 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
       {/* Top Workspace Strip */}
       <div className="px-3 sm:px-6 py-2 sm:py-3 bg-[#f6f3eb] border-b border-[#e5dfd3] shrink-0 select-none">
         {/* Title, Type & Status Row */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 min-w-0">
-          <div className="flex-1 min-w-0">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2 sm:gap-3 min-w-0">
+          <div className="flex-1 min-w-0 sm:min-w-[240px]">
             {/* Editable Title */}
             <input
               type="text"
@@ -328,9 +331,9 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
           </div>
 
           {/* Right Status Selector, Article Info, Export & Quick Generators */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap max-w-full">
             {/* Studio Actions Dropdown for narrow viewports */}
-            <div className="relative xl:hidden" ref={actionsMenuRef}>
+            <div className="relative 2xl:hidden" ref={actionsMenuRef}>
               <button
                 type="button"
                 onClick={() => setIsActionsMenuOpen(!isActionsMenuOpen)}
@@ -601,8 +604,8 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
               )}
             </div>
 
-            {/* Desktop Studio Buttons (Visible >= xl) */}
-            <div className="hidden xl:flex items-center gap-1.5">
+            {/* Desktop Studio Buttons (Visible >= 2xl) */}
+            <div className="hidden 2xl:flex items-center gap-1.5 flex-wrap">
               <button
                 type="button"
                 onClick={() => onTogglePanel?.('develop')}
@@ -798,6 +801,32 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
                       </div>
                     </div>
                   </button>
+
+                  <div className="border-t border-[#f0ece3] my-1"></div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsExportMenuOpen(false);
+                      setIsEditingBriefModalOpen(true);
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-amber-50/70 flex items-center gap-2.5 text-[#1e232a] cursor-pointer"
+                  >
+                    <MessageSquareQuote className="w-4 h-4 text-amber-800 shrink-0" />
+                    <div>
+                      <div className="font-semibold text-xs flex items-center gap-1.5">
+                        <span>Export Editing Brief</span>
+                        {(project.editingNotes?.length || 0) > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 text-[9px] font-bold">
+                            {project.editingNotes?.length}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-[#736c61]">
+                        Consolidated prompt for ChatGPT / Claude
+                      </div>
+                    </div>
+                  </button>
                 </div>
               )}
             </div>
@@ -966,7 +995,9 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
 
         <Editor
           projectId={project.id}
+          project={project}
           content={project.content}
+          editingNotes={project.editingNotes || []}
           editorRef={editorRef}
           onChange={(newContent) =>
             onChange({
@@ -975,6 +1006,22 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
               updatedAt: new Date().toISOString(),
             })
           }
+          onChangeWithNotes={(newContent, updatedNotes) =>
+            onChange({
+              ...project,
+              content: newContent,
+              editingNotes: updatedNotes,
+              updatedAt: new Date().toISOString(),
+            })
+          }
+          onEditingNotesChange={(updatedNotes) =>
+            onChange({
+              ...project,
+              editingNotes: updatedNotes,
+              updatedAt: new Date().toISOString(),
+            })
+          }
+          onOpenExportBrief={() => setIsEditingBriefModalOpen(true)}
           onSelectionChange={(text, range) => {
             setSelectedText(text);
             if (range) setSelectionRange(range);
@@ -1004,6 +1051,13 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
         projectTitle={project.title}
         onUpdateTitle={handleTitleChange}
         onChange={handleMetadataChange}
+      />
+
+      {/* Consolidated Editing Brief Modal */}
+      <ExportEditingBriefModal
+        isOpen={isEditingBriefModalOpen}
+        project={project}
+        onClose={() => setIsEditingBriefModalOpen(false)}
       />
 
       {/* Pre-Export Validation Modal */}

@@ -12,6 +12,7 @@ import {
   ArticleMetadata,
   GiftGuideMetadata,
   ProductCopyMetadata,
+  ArticleEditingNote,
 } from './project';
 import { ModelId } from './models';
 
@@ -35,6 +36,7 @@ export interface StructuredProjectState {
   articleMeta?: ArticleMetadata;
   giftGuideMeta?: GiftGuideMetadata;
   productCopyMeta?: ProductCopyMetadata;
+  editingNotes?: ArticleEditingNote[];
 }
 
 export interface ProjectVersionSnapshot {

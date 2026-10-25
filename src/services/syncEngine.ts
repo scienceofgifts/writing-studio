@@ -108,7 +108,10 @@ class SyncEngine {
   private status: SyncStatus = 'signed_out';
   private lastSyncedAt: string | null = null;
   private errorMessage: string | null = null;
-  private isOnline: boolean = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  private isOnline: boolean =
+    typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean'
+      ? navigator.onLine
+      : true;
 
   private isApplyingRemote: boolean = false;
   private isInitialReconciliationComplete: boolean = false;
