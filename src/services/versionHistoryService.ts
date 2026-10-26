@@ -342,6 +342,14 @@ function buildComparableProjectFingerprint(project: WritingProject): string {
     to: n.to,
     anchorStatus: n.anchorStatus,
   }));
+  const normalizedCitations = (project.citationRecommendations || []).map((r) => ({
+    id: r.id,
+    studyId: r.studyId,
+    targetPassage: r.targetPassage,
+    status: r.status,
+    proposedPassage: r.proposedPassage,
+    draftStatus: r.draftStatus,
+  }));
   return JSON.stringify({
     title: (project.title || '').trim(),
     status: project.status || 'draft',
@@ -362,6 +370,7 @@ function buildComparableProjectFingerprint(project: WritingProject): string {
     productCopyMeta: project.productCopyMeta || null,
     editorialDevelopment: project.editorialDevelopment || null,
     editingNotes: normalizedNotes,
+    citationRecommendations: normalizedCitations,
   });
 }
 

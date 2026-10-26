@@ -13,8 +13,23 @@ import {
   PotentialArticleIdea,
 } from '../types/research';
 import { WritingProject, OutlineItem } from '../types/project';
-import { CitationRecommendation, FindCitationsResponse, ResearchGap } from '../types/citation';
-import { splitBodyAndReferences, extractCitationsFromHtml } from '../utils/citationUtils';
+import {
+  CitationRecommendation,
+  FindCitationsResponse,
+  ResearchGap,
+  CitationWorkflowType,
+  CitationEvidenceType,
+  CitationVerificationStatus,
+  DraftResearchPassageResponse,
+} from '../types/citation';
+import {
+  splitBodyAndReferences,
+  extractCitationsFromHtml,
+  verifyTargetPassageInHtml,
+  isPassageCitedWithStudy,
+  resolveStudySourceLink,
+  mergeCitationRecommendations,
+} from '../utils/citationUtils';
 import { extractPlainTextFromHtml } from '../utils/richText';
 import { resolveEffectiveModelId } from './modelRegistry';
 import { storage } from './storage';
@@ -445,15 +460,22 @@ export class ResearchService {
             publication: s.publication || s.sourceOrPublisher,
             doi: s.doi,
             url: s.sourceUrl || s.doiOrUrl,
-            claims: (s.claims || []).map((c) => ({
-              text: c.claimText,
-              type: c.claimType,
-              confidence: c.confidence,
-              source: c.supportedBySource,
-            })),
+            abstract: s.abstract || s.summary || '',
+            claims: (s.claims || [])
+              .filter((c) => !c._isDeleted)
+              .map((c) => ({
+                id: c.id,
+                text: c.claimText,
+                type: c.claimType,
+                confidence: c.confidence,
+                source: c.supportedBySource,
+                limitation: c.relevantLimitation,
+              })),
             keyFindings: s.analysis?.whatTheStudyFound || s.keyFindings || [],
             whatWasStudied: s.analysis?.whatWasStudied || '',
             whatItMeans: s.analysis?.whatItMeans || '',
+            whatItDoesNotEstablish: s.analysis?.whatItDoesNotEstablish || [],
+            limitations: s.analysis?.limitations || [],
             methodology: s.analysis?.methodology || s.methodology || '',
           })),
           existingCitedStudyIds: Array.from(existingStudyIds),
@@ -475,44 +497,29 @@ export class ResearchService {
         throw new Error(errMessage);
       }
 
-      const enriched: CitationRecommendation[] = data.recommendations.map(
-        (rec: any, idx: number) => {
-          const study = studies.find((s) => s.id === rec.studyId);
-          const isAlreadyCited = existingStudyIds.has(rec.studyId);
-          return {
-            id: rec.id || `cit-opp-${Date.now()}-${idx}`,
-            studyId: rec.studyId,
-            studyTitle: study?.title || rec.studyTitle || 'Research Study',
-            authors: study?.authors || rec.authors || ['Research Archive'],
-            publicationYear: study?.publicationYear || rec.publicationYear,
-            publication: study?.publication || study?.sourceOrPublisher,
-            doi: study?.doi,
-            url: study?.sourceUrl || study?.doiOrUrl,
-            targetPassage: rec.targetPassage,
-            proposedCitationNumber:
-              rec.proposedCitationNumber || existingStudyIds.size + idx + 1,
-            relevantFinding:
-              rec.relevantFinding ||
-              study?.analysis?.whatTheStudyFound?.[0] ||
-              'Empirical finding aligns with claim.',
-            explanation:
-              rec.explanation ||
-              `Substantiates the article's observation regarding ${
-                study?.title || 'gift psychology'
-              }.`,
-            confidence: rec.confidence || 'verified_empirical',
-            isVerifiedMatch: rec.isVerifiedMatch !== false,
-            status: isAlreadyCited ? 'accepted' : 'pending',
-            createdAt: new Date().toISOString(),
-          };
-        }
+      const validated = this.validateAndEnrichCitationRecommendations(
+        data.recommendations,
+        studies,
+        project.content || '',
+        existingStudyIds.size
+      );
+
+      // Deduplicate incoming recommendations and preserve any previously reviewed items on the project
+      const merged = mergeCitationRecommendations(
+        project.citationRecommendations || [],
+        validated,
+        project.content || ''
       );
 
       return {
         ok: true,
-        recommendations: enriched,
+        recommendations: merged,
         gaps: data.gaps || [],
-        rationale: data.rationale || 'Discovered research citations.',
+        rationale:
+          data.rationale ||
+          (validated.length === 0
+            ? 'No existing sentences had direct empirical support from the Research Library.'
+            : 'Completed evidence-first citation verification.'),
       };
     } catch (err: any) {
       console.error('Error finding citations:', err);
@@ -520,6 +527,360 @@ export class ResearchService {
       throw err;
     }
   }
+
+  /**
+   * Programmatically verifies and enriches raw AI citation recommendations against
+   * the actual ResearchStudy library records and the current article HTML.
+   * - Never silently defaults `isVerifiedMatch` to `true`.
+   * - Never invents fallback findings or explanations when study evidence is missing.
+   * - Separates Workflow A (`cite_existing`) from Workflow B (`draft_passage`).
+   */
+  validateAndEnrichCitationRecommendations(
+    rawRecommendations: any[],
+    studies: ResearchStudy[],
+    htmlContent: string,
+    existingCitedCount = 0
+  ): CitationRecommendation[] {
+    if (!Array.isArray(rawRecommendations) || rawRecommendations.length === 0) {
+      return [];
+    }
+
+    const results: CitationRecommendation[] = [];
+
+    rawRecommendations.forEach((rec: any, idx: number) => {
+      if (!rec || !rec.studyId) return;
+
+      // Must match a real study in the library
+      const study = studies.find((s) => s.id === rec.studyId && !s._isDeleted);
+      if (!study) return;
+
+      const findings = [
+        ...(study.analysis?.whatTheStudyFound || []),
+        ...(study.keyFindings || []),
+      ]
+        .map((f) => String(f || '').trim())
+        .filter(Boolean);
+
+      const activeClaims = (study.claims || []).filter(
+        (c) => !c._isDeleted && c.claimText && c.claimText.trim()
+      );
+      const sourceFactClaims = activeClaims.filter(
+        (c) => c.claimType === 'source_fact' || c.claimType === 'editorial_interpretation'
+      );
+      const abstractOrSummary = String(
+        study.abstract || study.summary || study.analysis?.whatWasStudied || ''
+      ).trim();
+
+      const studyLimitations = [
+        ...(study.analysis?.limitations || []),
+        ...(study.analysis?.whatItDoesNotEstablish || []),
+        ...activeClaims.map((c) => c.relevantLimitation || '').filter(Boolean),
+      ]
+        .map((l) => String(l || '').trim())
+        .filter(Boolean);
+
+      const hasLibraryEvidence =
+        findings.length > 0 || sourceFactClaims.length > 0 || abstractOrSummary.length > 20;
+
+      const linkInfo = resolveStudySourceLink(study);
+      const sourceIdentifier =
+        linkInfo.url ||
+        linkInfo.displayLabel ||
+        'No direct DOI or external URL on file in Research Library';
+
+      // Extract finding & supporting evidence without fabricating boilerplate
+      const rawFinding = String(rec.relevantFinding || '').trim();
+      const fallbackStudyFinding =
+        findings[0] || sourceFactClaims[0]?.claimText || '';
+      const relevantFinding = rawFinding || fallbackStudyFinding;
+
+      let supportingEvidence = String(rec.supportingEvidence || '').trim();
+      if (!supportingEvidence && hasLibraryEvidence) {
+        const matchedClaim = activeClaims.find(
+          (c) =>
+            c.supportedBySource?.trim() &&
+            (rawFinding
+              ? c.claimText.toLowerCase().includes(rawFinding.slice(0, 25).toLowerCase())
+              : true)
+        );
+        if (matchedClaim?.supportedBySource) {
+          supportingEvidence = matchedClaim.supportedBySource.trim();
+        } else if (findings.length > 0) {
+          supportingEvidence = findings[0];
+        } else if (sourceFactClaims.length > 0) {
+          supportingEvidence = sourceFactClaims[0].claimText;
+        } else if (abstractOrSummary) {
+          supportingEvidence = abstractOrSummary.slice(0, 280);
+        }
+      }
+
+      const limitationsOrQualifications =
+        String(rec.limitationsOrQualifications || '').trim() ||
+        studyLimitations[0] ||
+        undefined;
+
+      const rawTargetPassage = String(rec.targetPassage || '').trim();
+      const rawProposedPassage = String(rec.proposedPassage || '').trim();
+
+      // Determine workflowType ('cite_existing' vs 'draft_passage')
+      const workflowType: CitationWorkflowType =
+        rec.workflowType === 'draft_passage' || (!rawTargetPassage && Boolean(rawProposedPassage))
+          ? 'draft_passage'
+          : 'cite_existing';
+
+      // Determine evidenceType
+      const validEvidenceTypes = new Set<CitationEvidenceType>([
+        'direct_empirical',
+        'author_interpretation',
+        'background_context',
+        'editorial_suggestion',
+      ]);
+      const evidenceType: CitationEvidenceType = validEvidenceTypes.has(rec.evidenceType)
+        ? rec.evidenceType
+        : rec.isVerifiedMatch === true && rec.confidence === 'verified_empirical'
+        ? 'direct_empirical'
+        : workflowType === 'draft_passage'
+        ? 'editorial_suggestion'
+        : 'background_context';
+
+      const confidence =
+        rec.confidence === 'verified_empirical' ||
+        rec.confidence === 'conceptual_support' ||
+        rec.confidence === 'partial_limitation'
+          ? rec.confidence
+          : rec.isVerifiedMatch === true
+          ? 'verified_empirical'
+          : 'conceptual_support';
+
+      let isVerifiedMatch = false;
+      let isInsertionReady = false;
+      let verificationStatus: CitationVerificationStatus = 'needs_review';
+      let verificationNote: string | undefined = rec.verificationNote
+        ? String(rec.verificationNote).trim()
+        : undefined;
+
+      if (workflowType === 'draft_passage') {
+        isVerifiedMatch = false;
+        isInsertionReady = false;
+        if (!hasLibraryEvidence || !relevantFinding) {
+          verificationStatus = 'insufficient_evidence';
+          verificationNote =
+            verificationNote ||
+            'Insufficient evidence in the Research Library record to verify or draft a supported passage.';
+        } else {
+          verificationStatus = 'needs_review';
+          verificationNote =
+            verificationNote ||
+            'This study is relevant to the article topic, but no existing sentence directly states its finding. Draft and approve a research-backed passage before citing.';
+        }
+      } else {
+        // Workflow A: Cite an existing passage
+        const passageCheck = verifyTargetPassageInHtml(htmlContent, rawTargetPassage);
+
+        if (!hasLibraryEvidence || !relevantFinding || !supportingEvidence) {
+          verificationStatus = 'insufficient_evidence';
+          isVerifiedMatch = false;
+          isInsertionReady = false;
+          verificationNote =
+            verificationNote ||
+            'Insufficient evidence in the Research Library to verify that this study supports the passage.';
+        } else if (passageCheck.status === 'not_found') {
+          verificationStatus = 'unmatched_passage';
+          isVerifiedMatch = false;
+          isInsertionReady = false;
+          verificationNote =
+            passageCheck.reason ||
+            'Target passage does not match any sentence in the current article text.';
+        } else if (passageCheck.status === 'ambiguous') {
+          verificationStatus = 'ambiguous_passage';
+          isVerifiedMatch = false;
+          isInsertionReady = false;
+          verificationNote =
+            passageCheck.reason ||
+            'Target passage appears multiple times in the article and cannot be matched unambiguously.';
+        } else if (
+          rec.isVerifiedMatch !== true ||
+          evidenceType === 'background_context' ||
+          evidenceType === 'editorial_suggestion' ||
+          confidence === 'partial_limitation'
+        ) {
+          verificationStatus = 'needs_review';
+          isVerifiedMatch = false;
+          isInsertionReady = false;
+          verificationNote =
+            verificationNote ||
+            'Study provides general context or has notable limitations rather than direct empirical proof of this sentence. Verify carefully or draft a dedicated research-backed passage.';
+        } else {
+          verificationStatus = 'verified';
+          isVerifiedMatch = true;
+          isInsertionReady = true;
+        }
+      }
+
+      const alreadyCitedOnPassage =
+        workflowType === 'cite_existing' && rawTargetPassage
+          ? isPassageCitedWithStudy(htmlContent, rawTargetPassage, study.id)
+          : false;
+
+      results.push({
+        id: rec.id || `cit-opp-${Date.now()}-${idx}`,
+        studyId: study.id,
+        studyTitle: study.title || rec.studyTitle || 'Untitled Research Study',
+        authors: study.authors || rec.authors || ['Research Archive'],
+        publicationYear: study.publicationYear || rec.publicationYear,
+        publication: study.publication || study.sourceOrPublisher,
+        doi: linkInfo.doi || study.doi,
+        url: linkInfo.url || study.sourceUrl || study.doiOrUrl,
+        sourceIdentifier,
+        workflowType,
+        targetPassage: rawTargetPassage,
+        targetSectionHeading: rec.targetSectionHeading ? String(rec.targetSectionHeading).trim() : undefined,
+        anchorPassageContext: rec.anchorPassageContext ? String(rec.anchorPassageContext).trim() : undefined,
+        proposedCitationNumber: rec.proposedCitationNumber || existingCitedCount + idx + 1,
+        relevantFinding,
+        supportingEvidence: supportingEvidence || undefined,
+        limitationsOrQualifications,
+        explanation: String(rec.explanation || '').trim(),
+        confidence,
+        evidenceType,
+        isVerifiedMatch,
+        verificationStatus,
+        isInsertionReady,
+        verificationNote,
+        proposedPassage: rawProposedPassage || undefined,
+        draftStatus: rawProposedPassage ? 'proposed' : 'none',
+        status: alreadyCitedOnPassage ? 'accepted' : 'pending',
+        createdAt: rec.createdAt || new Date().toISOString(),
+      });
+    });
+
+    return results;
+  }
+
+  /**
+   * Workflow B: Drafts a concise, research-backed editorial passage grounded strictly
+   * in the study's actual findings, claims, and limitations in the Research Library.
+   * Does NOT modify the article; returns the proposed passage for writer review, editing, and approval.
+   */
+  async draftResearchPassage(
+    project: WritingProject,
+    study: ResearchStudy,
+    options?: {
+      targetSectionHeading?: string;
+      anchorPassageContext?: string;
+      editorialGuidance?: string;
+      modelOverride?: ModelId;
+    }
+  ): Promise<DraftResearchPassageResponse> {
+    if (!study || !study.id) {
+      return {
+        ok: false,
+        proposedPassage: '',
+        relevantFinding: '',
+        supportingEvidence: '',
+        error: 'Study not found in Research Library.',
+      };
+    }
+
+    const findings = [
+      ...(study.analysis?.whatTheStudyFound || []),
+      ...(study.keyFindings || []),
+    ]
+      .map((f) => String(f || '').trim())
+      .filter(Boolean);
+
+    const activeClaims = (study.claims || []).filter(
+      (c) => !c._isDeleted && c.claimText && c.claimText.trim()
+    );
+    const abstractText = String(
+      study.abstract || study.summary || study.analysis?.whatWasStudied || ''
+    ).trim();
+
+    if (findings.length === 0 && activeClaims.length === 0 && abstractText.length < 20) {
+      return {
+        ok: false,
+        proposedPassage: '',
+        relevantFinding: '',
+        supportingEvidence: '',
+        error:
+          'This study has no analyzed findings, structured claims, or abstract in the Research Library. Analyze the study first before drafting a research-backed passage.',
+      };
+    }
+
+    const effectiveModel = resolveEffectiveModelId({
+      actionOverride: options?.modelOverride,
+      projectOverride: project.modelOverride,
+      globalDefault: storage.getGlobalModel(),
+    });
+    const { bodyHtml } = splitBodyAndReferences(project.content || '');
+    const plainDoc = extractPlainTextFromHtml(bodyHtml).trim();
+
+    const response = await fetch(getApiUrl('/api/gemini/draft-research-passage'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectTitle: project.title,
+        documentContent: plainDoc,
+        targetSectionHeading: options?.targetSectionHeading || '',
+        anchorPassageContext: options?.anchorPassageContext || '',
+        editorialGuidance: options?.editorialGuidance || '',
+        model: effectiveModel,
+        study: {
+          id: study.id,
+          title: study.title,
+          authors: study.authors,
+          publicationYear: study.publicationYear,
+          publication: study.publication || study.sourceOrPublisher,
+          abstract: abstractText,
+          whatWasStudied: study.analysis?.whatWasStudied || '',
+          whatTheStudyFound: findings,
+          whatItMeans: study.analysis?.whatItMeans || '',
+          whatItDoesNotEstablish: study.analysis?.whatItDoesNotEstablish || [],
+          limitations: study.analysis?.limitations || [],
+          claims: activeClaims.map((c) => ({
+            claimText: c.claimText,
+            claimType: c.claimType,
+            supportedBySource: c.supportedBySource,
+            confidence: c.confidence,
+            relevantLimitation: c.relevantLimitation,
+          })),
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      const errMessage = errData.error || `Server returned ${response.status}`;
+      toast.error('Draft Passage Failed', errMessage);
+      throw new Error(errMessage);
+    }
+
+    const data = await response.json();
+    if (!data.ok || !data.proposedPassage) {
+      const errMessage = data.error || 'Failed to draft research-backed passage.';
+      toast.error('Draft Passage Failed', errMessage);
+      throw new Error(errMessage);
+    }
+
+    return {
+      ok: true,
+      proposedPassage: String(data.proposedPassage).trim(),
+      relevantFinding: String(data.relevantFinding || findings[0] || activeClaims[0]?.claimText || '').trim(),
+      supportingEvidence: String(
+        data.supportingEvidence ||
+          activeClaims[0]?.supportedBySource ||
+          findings[0] ||
+          abstractText.slice(0, 240)
+      ).trim(),
+      limitationsOrQualifications:
+        String(data.limitationsOrQualifications || study.analysis?.limitations?.[0] || '').trim() ||
+        undefined,
+      explanation: String(data.explanation || '').trim() || undefined,
+      targetSectionHeading: data.targetSectionHeading || options?.targetSectionHeading,
+      anchorPassageContext: data.anchorPassageContext || options?.anchorPassageContext,
+    };
+  }
 }
 
 export const researchService = new ResearchService();
+

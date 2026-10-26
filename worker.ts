@@ -4,8 +4,12 @@
  * Guarantees zero silent fallbacks and full error visibility.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import { extractText } from 'unpdf';
+import {
+  validateBriefGenerationInputs,
+  validateAndNormalizeEditorialBrief,
+} from './src/utils/editorialDevelopmentUtils';
 
 export interface Env {
   GEMINI_API_KEY?: string;
@@ -52,6 +56,52 @@ function getAiClient(apiKey: string): GoogleGenAI {
       },
     },
   });
+}
+
+function parseModelJson(rawText?: string): any {
+  const text = (rawText || '').trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    const cleaned = text
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      const objMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (objMatch) {
+        try {
+          return JSON.parse(objMatch[0]);
+        } catch {}
+      }
+      const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+      if (arrMatch) {
+        try {
+          return JSON.parse(arrMatch[0]);
+        } catch {}
+      }
+    }
+  }
+  return null;
+}
+
+function toStringArray(val: any, fallback: string[] = []): string[] {
+  if (Array.isArray(val)) {
+    return val
+      .map((item) =>
+        typeof item === 'string'
+          ? item.trim()
+          : String(item?.text || item?.title || item?.claimText || item || '').trim()
+      )
+      .filter(Boolean);
+  }
+  if (typeof val === 'string' && val.trim()) {
+    return [val.trim()];
+  }
+  return fallback;
 }
 
 function buildEditorialPrompt(payload: any): { systemInstruction: string; userPrompt: string } {
@@ -354,13 +404,13 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.3 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !Array.isArray(parsed.opportunities)) {
+      const parsed = parseModelJson(response.text);
+      const opportunitiesList = Array.isArray(parsed) ? parsed : parsed?.opportunities;
+      if (!Array.isArray(opportunitiesList)) {
         throw new Error('Model did not return link opportunities array');
       }
 
-      const sanitized = parsed.opportunities.map((o: any, idx: number) => ({
+      const sanitized = opportunitiesList.map((o: any, idx: number) => ({
         id: `opp-${Date.now()}-${idx}`,
         linkId: o.linkId || `link-${idx}`,
         linkTitle: o.linkTitle || 'Science of Gifts Destination',
@@ -386,29 +436,152 @@ export async function handleApiRequest(
     // 4. POST /api/gemini/find-citations
     if (pathname === '/api/gemini/find-citations' && request.method === 'POST') {
       const ai = getAi();
-      const { documentContent = '', studies = [] } = body;
+      const { documentContent = '', studies = [], projectTitle = '' } = body;
       const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.6-flash');
 
-      if (!documentContent) {
+      if (!documentContent || !String(documentContent).trim()) {
         return jsonResponse({ ok: true, recommendations: [], gaps: [], rationale: 'Empty document provided.' });
       }
 
-      const systemInstruction = `You are Senior Research Editor for "Science of Gifts". Identify exact sentences making empirical claims substantiated by studies in the library. Output JSON: { "recommendations": [{ "studyId", "targetPassage", "relevantFinding", "explanation", "confidence" }], "gaps": [{ "claimInArticle", "topicNeeded", "suggestion" }], "rationale" }`;
-      const userPrompt = `DOCUMENT:\n${documentContent}\n\nSTUDIES:\n${JSON.stringify(studies)}`;
+      const systemInstruction = `You are Senior Research Verification Editor for "Science of Gifts".
+Your mission is strict, evidence-first research verification. Precision and defensibility always take priority over quantity.
+Returning 0 recommendations is completely valid and preferred over weak, generic, or forced topical matches.
+
+STRICT EVIDENCE RULES:
+1. A study being broadly about the same topic as the article is NEVER sufficient reason to cite an existing sentence.
+2. Distinguish two distinct workflows:
+   - WORKFLOW A ("workflowType": "cite_existing"):
+     Use ONLY when an existing sentence in the article makes a specific factual or empirical claim that is directly substantiated by a specific finding or claim in the study record.
+     - "targetPassage" MUST be copied verbatim from the article (an exact, complete sentence that appears once in the article).
+     - "isVerifiedMatch" MUST be true ONLY when the study directly supports that exact sentence's claim.
+   - WORKFLOW B ("workflowType": "draft_passage"):
+     Use when a study in the library has genuine empirical findings relevant to the article's argument, but NO existing sentence in the article states that specific finding yet.
+     - Set "workflowType": "draft_passage", "isVerifiedMatch": false, "targetPassage": "".
+     - Specify "targetSectionHeading" (the heading in the article where this study's finding belongs) and/or "anchorPassageContext" (an existing sentence after which a new research-backed passage would naturally follow).
+     - Provide "proposedPassage": a concise 1-2 sentence editorial passage written in the "Science of Gifts" voice (no em dashes, no markdown, no hype) that accurately states the study's finding without inventing numbers, sample sizes, or conclusions beyond the provided study data.
+3. Classify "evidenceType" accurately:
+   - "direct_empirical": Direct empirical result measured in the study.
+   - "author_interpretation": Study authors' theoretical interpretation.
+   - "background_context": General background context (not direct empirical proof of the article's claim).
+   - "editorial_suggestion": Editorial synthesis or suggestion.
+4. For every recommendation, you MUST populate:
+   - "studyId": Exact ID of the study from the provided library list.
+   - "relevantFinding": The specific finding or result from the study.
+   - "supportingEvidence": Verbatim or close factual evidence from the study's findings, claims, or abstract in the library.
+   - "limitationsOrQualifications": Any sample constraints, methodological caveats, or scope differences between the study and the article passage.
+   - "confidence": "verified_empirical" | "conceptual_support" | "partial_limitation".
+   - "explanation": Clear editorial rationale explaining the exact connection.
+5. NEVER invent study findings, statistics, sample sizes, DOIs, or URLs. If a study record has insufficient evidence in the library to verify a match, set "isVerifiedMatch": false and explain what requires verification.
+
+Output ONLY valid JSON matching:
+{
+  "recommendations": [
+    {
+      "studyId": "string",
+      "workflowType": "cite_existing" | "draft_passage",
+      "targetPassage": "string",
+      "targetSectionHeading": "string",
+      "anchorPassageContext": "string",
+      "proposedPassage": "string",
+      "relevantFinding": "string",
+      "supportingEvidence": "string",
+      "limitationsOrQualifications": "string",
+      "explanation": "string",
+      "confidence": "verified_empirical" | "conceptual_support" | "partial_limitation",
+      "evidenceType": "direct_empirical" | "author_interpretation" | "background_context" | "editorial_suggestion",
+      "isVerifiedMatch": boolean,
+      "verificationNote": "string"
+    }
+  ],
+  "gaps": [{ "claimInArticle": "string", "topicNeeded": "string", "suggestion": "string" }],
+  "rationale": "string"
+}`;
+      const userPrompt = `ARTICLE TITLE: "${projectTitle}"\n\nARTICLE DOCUMENT:\n${documentContent}\n\nRESEARCH LIBRARY STUDIES:\n${JSON.stringify(studies)}`;
 
       const response = await ai.models.generateContent({
         model: modelToUse,
         contents: userPrompt,
-        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.3 },
+        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.1 },
       });
 
-      const text = response.text?.trim() || '{}';
-      const parsed = JSON.parse(text);
+      const parsed = parseModelJson(response.text) || {};
       return jsonResponse({
         ok: true,
-        recommendations: parsed.recommendations || [],
-        gaps: parsed.gaps || [],
-        rationale: parsed.rationale || 'Identified empirical research citations.',
+        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [],
+        gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
+        rationale: parsed.rationale || 'Completed evidence-first citation verification.',
+        modelUsed: modelToUse,
+      });
+    }
+
+    // 4b. POST /api/gemini/draft-research-passage
+    if (pathname === '/api/gemini/draft-research-passage' && request.method === 'POST') {
+      const ai = getAi();
+      const {
+        projectTitle = '',
+        documentContent = '',
+        study = {},
+        targetSectionHeading = '',
+        anchorPassageContext = '',
+        editorialGuidance = '',
+      } = body;
+      const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.6-flash');
+
+      if (!study || !study.id || !study.title) {
+        return jsonResponse({ ok: false, error: 'A valid research study is required to draft a passage.' }, 400);
+      }
+
+      const systemInstruction = `You are Senior Research Editor for "Science of Gifts".
+Draft a concise, 1-2 sentence research-backed editorial passage that integrates a specific empirical finding from the provided study into the article.
+STRICT RULES:
+1. Ground the passage EXCLUSIVELY in the provided study's actual findings, claims, abstract, and methodology.
+2. NEVER invent statistics, percentages, sample sizes, dates, or conclusions not explicitly present in the study data.
+3. Respect the study's scope and limitations. Qualify claims appropriately when the study is preliminary or context-specific.
+4. Write in the "Science of Gifts" house voice: human, specific, civilized, conversational, and unhurried.
+5. NEVER use em dashes (—) and NEVER use Markdown syntax (no **, *, #, [link](url)). Output plain editorial prose sentences only.
+
+Return ONLY valid JSON:
+{
+  "proposedPassage": "1-2 sentences of clean editorial prose stating the research-backed point.",
+  "relevantFinding": "The specific finding from the study used in this passage.",
+  "supportingEvidence": "The exact evidence from the study record supporting this passage.",
+  "limitationsOrQualifications": "Any limitations, sample constraints, or qualifications the writer should keep in mind.",
+  "explanation": "Why this passage fits the article and accurately reflects the study.",
+  "targetSectionHeading": "Suggested section heading in the article",
+  "anchorPassageContext": "Optional existing sentence in the article after which this passage fits best"
+}`;
+
+      const userPrompt = `ARTICLE TITLE: "${projectTitle}"
+TARGET SECTION: "${targetSectionHeading}"
+ANCHOR CONTEXT: "${anchorPassageContext}"
+WRITER GUIDANCE: "${editorialGuidance}"
+
+ARTICLE EXCERPT:
+${String(documentContent).slice(0, 3500)}
+
+STUDY DATA (AUTHORITATIVE SOURCE — DO NOT INVENT BEYOND THIS):
+${JSON.stringify(study, null, 2)}`;
+
+      const response = await ai.models.generateContent({
+        model: modelToUse,
+        contents: userPrompt,
+        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.2 },
+      });
+
+      const parsed = parseModelJson(response.text);
+      if (!parsed || typeof parsed.proposedPassage !== 'string' || !parsed.proposedPassage.trim()) {
+        throw new Error('Model did not return a valid research-backed passage');
+      }
+
+      return jsonResponse({
+        ok: true,
+        proposedPassage: parsed.proposedPassage.replace(/—/g, ', ').trim(),
+        relevantFinding: parsed.relevantFinding || '',
+        supportingEvidence: parsed.supportingEvidence || '',
+        limitationsOrQualifications: parsed.limitationsOrQualifications || '',
+        explanation: parsed.explanation || '',
+        targetSectionHeading: parsed.targetSectionHeading || targetSectionHeading,
+        anchorPassageContext: parsed.anchorPassageContext || anchorPassageContext,
         modelUsed: modelToUse,
       });
     }
@@ -433,8 +606,7 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.2 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
+      const parsed = parseModelJson(response.text);
       if (!parsed || !Array.isArray(parsed.findings)) {
         throw new Error('Model did not return structured editorial findings');
       }
@@ -491,8 +663,7 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.1 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
+      const parsed = parseModelJson(response.text);
       if (!parsed || !Array.isArray(parsed.findings)) {
         throw new Error('Model did not return structured QC findings');
       }
@@ -508,11 +679,41 @@ export async function handleApiRequest(
     // 7. POST /api/gemini/outline
     if (pathname === '/api/gemini/outline' && request.method === 'POST') {
       const ai = getAi();
-      const { structureType = 'essay', projectTitle = 'Untitled', brief = {} } = body;
+      const {
+        structureType = 'essay',
+        customStructureNotes = '',
+        projectTitle = 'Untitled',
+        brief = {},
+        editorialDevelopment = {},
+        attachedStudies = [],
+        internalLinks = [],
+      } = body;
       const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.6-flash');
 
-      const systemInstruction = `You are executive editorial architect for "Science of Gifts". Construct an outline for "${projectTitle}" [Mode: ${structureType}]. Output JSON: { "structureType", "rationale", "outline": [{ "title", "heading", "purpose", "mainIdea", "develops", "notes" }] }`;
-      const userPrompt = `PROJECT: "${projectTitle}"\nBRIEF:\n${JSON.stringify(brief)}\nGenerate a 5-step ${structureType} outline now.`;
+      const systemInstruction = `You are executive editorial architect for "Science of Gifts". Construct an outline for "${projectTitle}" [Mode: ${structureType}].
+Never use em dashes (—) or markdown syntax in section titles.
+Output ONLY valid JSON matching:
+{
+  "structureType": "${structureType}",
+  "rationale": "1-2 sentences explaining the intellectual progression of this outline.",
+  "outline": [
+    {
+      "title": "Section or step title",
+      "heading": "Optional H2 heading for the article",
+      "purpose": "What this section establishes or achieves",
+      "mainIdea": "Core argument of this section",
+      "develops": "How this section advances the overall thesis",
+      "notes": "Editorial guidance, tone notes, or things to avoid",
+      "assignedStudyIds": ["optional study IDs from attachedStudies"],
+      "assignedClaims": ["optional specific empirical claims to weave into this section"]
+    }
+  ]
+}`;
+      const userPrompt = `PROJECT: "${projectTitle}"
+STRUCTURE MODE: ${structureType}
+${customStructureNotes ? `CUSTOM STRUCTURE NOTES: ${customStructureNotes}\n` : ''}BRIEF:
+${JSON.stringify(brief, null, 2)}
+${editorialDevelopment?.direction ? `EDITORIAL DIRECTION:\n${JSON.stringify(editorialDevelopment.direction, null, 2)}\n` : ''}${Array.isArray(attachedStudies) && attachedStudies.length > 0 ? `ATTACHED RESEARCH STUDIES:\n${JSON.stringify(attachedStudies.map((s: any) => ({ id: s.id, title: s.title, keyFindings: s.analysis?.whatTheStudyFound || s.keyFindings || [] })))}\n` : ''}${Array.isArray(internalLinks) && internalLinks.length > 0 ? `INTERNAL LINKS:\n${JSON.stringify(internalLinks.slice(0, 15).map((l: any) => ({ id: l.id, title: l.title, url: l.url, preferredAnchor: l.preferredAnchor })))}\n` : ''}Generate a 5-7 section ${structureType} outline now.`;
 
       const response = await ai.models.generateContent({
         model: modelToUse,
@@ -520,14 +721,14 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.6 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !Array.isArray(parsed.outline) || parsed.outline.length === 0) {
+      const parsed = parseModelJson(response.text);
+      const rawOutline = Array.isArray(parsed) ? parsed : parsed?.outline || parsed?.items;
+      if (!Array.isArray(rawOutline) || rawOutline.length === 0) {
         throw new Error('Model did not return structured outline items');
       }
 
-      const formatted = parsed.outline.map((item: any, idx: number) => ({
-        id: `outline-${Date.now()}-${idx + 1}`,
+      const formatted = rawOutline.map((item: any, idx: number) => ({
+        id: item.id || `outline-${Date.now()}-${idx + 1}`,
         title: String(item.title || `Step ${idx + 1}`).trim(),
         heading: item.heading ? String(item.heading).trim() : undefined,
         purpose: String(item.purpose || item.description || '').trim(),
@@ -535,14 +736,17 @@ export async function handleApiRequest(
         develops: String(item.develops || '').trim(),
         description: String(item.description || item.purpose || '').trim(),
         notes: String(item.notes || '').trim(),
+        assignedStudyIds: toStringArray(item.assignedStudyIds),
+        assignedClaims: toStringArray(item.assignedClaims),
+        assignedInternalLinks: Array.isArray(item.assignedInternalLinks) ? item.assignedInternalLinks : [],
         completed: false,
       }));
 
       return jsonResponse({
         ok: true,
         modelUsed: modelToUse,
-        structureType: parsed.structureType || structureType,
-        rationale: parsed.rationale || 'Constructed intellectual progression.',
+        structureType: parsed?.structureType || structureType,
+        rationale: parsed?.rationale || 'Constructed intellectual progression.',
         outline: formatted,
       });
     }
@@ -562,13 +766,13 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !Array.isArray(parsed.ideas)) {
+      const parsed = parseModelJson(response.text);
+      const rawIdeas = Array.isArray(parsed) ? parsed : parsed?.ideas;
+      if (!Array.isArray(rawIdeas)) {
         throw new Error('Model did not return generated ideas');
       }
 
-      const ideas = parsed.ideas.map((item: any, idx: number) => ({
+      const ideas = rawIdeas.map((item: any, idx: number) => ({
         id: `idea-${Date.now()}-${idx}`,
         title: String(item.title || `Editorial Angle on ${topic}`).replace(/[*_#`]/g, '').trim(),
         angle: String(item.angle || 'An unexplored perspective.').replace(/[*_#`]/g, '').trim(),
@@ -586,12 +790,13 @@ export async function handleApiRequest(
     // 9. POST /api/gemini/generate-angles
     if (pathname === '/api/gemini/generate-angles' && request.method === 'POST') {
       const ai = getAi();
-      const { idea, projectTitle = '' } = body;
-      const topic = idea?.title || projectTitle || 'Craft, Gifting, and Material Longevity';
+      const { idea, projectTitle = '', projectTopic = '', targetAudience = '' } = body;
+      const topic = idea?.title || projectTitle || projectTopic || 'Craft, Gifting, and Material Longevity';
       const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.6-flash');
 
-      const systemInstruction = `You are executive editorial director for "Science of Gifts". Generate 5 distinct, non-formulaic editorial angles for "${topic}". Output JSON: { "angles": [{ "title", "coreArgument", "whyInteresting", "whatArticleEmphasizes", "possibleTakeaway" }] }`;
-      const userPrompt = `TOPIC: ${topic}\nGenerate 5 distinct editorial angles.`;
+      const systemInstruction = `You are executive editorial director for "Science of Gifts". Generate 5 distinct, non-formulaic editorial angles for "${topic}". Never use em dashes (—). Output JSON: { "angles": [{ "title", "coreArgument", "whyInteresting", "whatArticleEmphasizes", "possibleTakeaway" }] }`;
+      const userPrompt = `TOPIC: ${topic}
+${idea?.angle ? `INITIAL SEED ANGLE: ${idea.angle}\n` : ''}${idea?.whyInteresting ? `WHY INTERESTING: ${idea.whyInteresting}\n` : ''}${targetAudience ? `TARGET AUDIENCE: ${targetAudience}\n` : ''}Generate 5 genuinely distinct editorial angles.`;
 
       const response = await ai.models.generateContent({
         model: modelToUse,
@@ -599,13 +804,13 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.75 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !Array.isArray(parsed.angles)) {
+      const parsed = parseModelJson(response.text);
+      const rawAngles = Array.isArray(parsed) ? parsed : parsed?.angles;
+      if (!Array.isArray(rawAngles) || rawAngles.length === 0) {
         throw new Error('Model did not return editorial angles');
       }
 
-      const angles = parsed.angles.slice(0, 5).map((a: any, idx: number) => ({
+      const angles = rawAngles.slice(0, 5).map((a: any, idx: number) => ({
         id: `angle-${Date.now()}-${idx + 1}`,
         title: String(a.title || `Editorial Angle ${idx + 1}`).trim(),
         coreArgument: String(a.coreArgument || '').trim(),
@@ -620,30 +825,191 @@ export async function handleApiRequest(
 
     // 10. POST /api/gemini/create-editorial-brief
     if (pathname === '/api/gemini/create-editorial-brief' && request.method === 'POST') {
+      const {
+        projectTitle = '',
+        idea = {},
+        direction = {},
+        angles = [],
+        attachedStudies = [],
+        internalLinks = [],
+        styleProfile = null,
+        projectInstructions = '',
+        writingControls = {},
+      } = body;
+
+      const safeAngles = Array.isArray(angles) ? angles : [];
+      const inputCheck = validateBriefGenerationInputs({
+        projectTitle,
+        idea,
+        angles: safeAngles,
+        direction,
+      });
+      if (!inputCheck.valid) {
+        return jsonResponse({ ok: false, error: inputCheck.error }, 400);
+      }
+
       const ai = getAi();
-      const { projectTitle = 'Editorial Article', direction = {} } = body;
       const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.6-flash');
 
-      const systemInstruction = `You are executive editorial director for "Science of Gifts". Synthesize idea, selected angles, and direction into a structured Editorial Brief. Output JSON matching the Editorial Brief schema.`;
-      const userPrompt = `PROJECT: "${projectTitle}"\nDIRECTION: ${JSON.stringify(direction)}`;
+      const primaryAngleObj = safeAngles.find(
+        (a: any) => a.id === direction?.primaryAngleId || a.role === 'primary'
+      );
+      const secondaryAngleObj = safeAngles.find(
+        (a: any) => a.id === direction?.secondaryAngleId || a.role === 'secondary'
+      );
+      const briefMentionObjs = safeAngles.filter(
+        (a: any) =>
+          (Array.isArray(direction?.briefMentionAngleIds) &&
+            direction.briefMentionAngleIds.includes(a.id)) ||
+          a.role === 'brief_mention'
+      );
+      const excludedObjs = safeAngles.filter(
+        (a: any) =>
+          (Array.isArray(direction?.doNotUseAngleIds) &&
+            direction.doNotUseAngleIds.includes(a.id)) ||
+          a.role === 'do_not_use'
+      );
+
+      const safeStudies = Array.isArray(attachedStudies) ? attachedStudies.filter(Boolean) : [];
+      const safeLinks = Array.isArray(internalLinks)
+        ? internalLinks.filter((l: any) => l && l.active !== false).slice(0, 20)
+        : [];
+
+      const systemInstruction = `You are the executive editorial director for "Science of Gifts", an independent publication dedicated to thoughtful gifting, material craft, tool heritage, and recipient psychology.
+Synthesize the article idea, selected editorial angles, editor's custom direction (which has sovereign authority), attached academic research studies, and internal links into a comprehensive, structured Editorial Brief.
+
+STRICT EDITORIAL RULES:
+1. Editor's custom direction ("editorsDirection") takes highest precedence over AI-generated angle defaults.
+2. Clearly separate empirical facts from attached research studies ("factualContext") vs. editorial synthesis ("editorialInterpretation"). Do NOT invent study findings, DOIs, or statistics.
+3. Never use em dashes (—) or markdown syntax in field values.
+4. For "references", ONLY include studies from the provided ATTACHED RESEARCH STUDIES list, preserving their exact "studyId", "title", "authors", "publication", "publicationYear", and "doiOrUrl". If no studies are attached, return "references": [].`;
+
+      const userPrompt = `PROJECT TITLE: "${projectTitle}"
+ORIGINAL IDEA: ${JSON.stringify(idea || {})}
+PRIMARY ANGLE: ${primaryAngleObj ? JSON.stringify(primaryAngleObj) : 'None explicitly selected — derive from Editor Direction and Idea'}
+SECONDARY ANGLE: ${secondaryAngleObj ? JSON.stringify(secondaryAngleObj) : 'None selected'}
+BRIEF MENTIONS: ${JSON.stringify(briefMentionObjs.map((a: any) => ({ title: a.title, coreArgument: a.coreArgument })))}
+DO NOT USE / EXCLUDED ANGLES: ${JSON.stringify(excludedObjs.map((a: any) => ({ title: a.title, coreArgument: a.coreArgument })))}
+EDITOR'S CUSTOM DIRECTION (SOVEREIGN AUTHORITY): "${direction?.editorsDirection || ''}"
+PROJECT INSTRUCTIONS: "${projectInstructions || ''}"
+WRITING CONTROLS: ${JSON.stringify(writingControls || {})}
+${styleProfile ? `STYLE PROFILE: "${styleProfile.name}"\n` : ''}ATTACHED RESEARCH STUDIES (${safeStudies.length}):
+${JSON.stringify(
+  safeStudies.map((s: any) => ({
+    studyId: s.id,
+    title: s.title,
+    authors: s.authors,
+    publication: s.publication || s.sourceOrPublisher,
+    publicationYear: s.publicationYear || s.publicationDate,
+    doiOrUrl: s.doi || s.sourceUrl || s.doiOrUrl,
+    findings: s.analysis?.whatTheStudyFound || s.keyFindings || [],
+    limitations: s.analysis?.limitations || [],
+  }))
+)}
+AVAILABLE INTERNAL LINKS (${safeLinks.length}):
+${JSON.stringify(
+  safeLinks.map((l: any) => ({
+    title: l.title,
+    url: l.url || l.targetUrl,
+    preferredAnchor: l.preferredAnchor || l.anchorText,
+    topic: l.topic || l.category,
+  }))
+)}`;
+
+      const briefResponseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          workingTitle: { type: Type.STRING, description: 'Compelling, literary editorial working title' },
+          topic: { type: Type.STRING, description: 'Concise core topic summary' },
+          audience: { type: Type.STRING, description: 'Specific intended reader profile' },
+          searchIntent: { type: Type.STRING, description: "Reader's underlying question or intent" },
+          primaryAngle: { type: Type.STRING, description: 'The central pillar and angle of the article (1-2 sentences)' },
+          secondaryFocus: { type: Type.STRING, description: 'Supporting layer or secondary angle (or empty string if none)' },
+          briefMentions: { type: Type.ARRAY, items: { type: Type.STRING } },
+          thingsToAvoid: { type: Type.ARRAY, items: { type: Type.STRING } },
+          centralArgument: { type: Type.STRING, description: 'The core intellectual thesis the article argues (2-3 sentences)' },
+          keyQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+          editorialDirection: { type: Type.STRING, description: 'Synthesized tone, framing, and structural direction' },
+          suggestedTakeaway: { type: Type.STRING, description: 'What the reader should feel, understand, or do after reading' },
+          factualContext: { type: Type.ARRAY, items: { type: Type.STRING } },
+          editorialInterpretation: { type: Type.ARRAY, items: { type: Type.STRING } },
+          internalLinkOpportunities: { type: Type.ARRAY, items: { type: Type.STRING } },
+          references: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                studyId: { type: Type.STRING },
+                title: { type: Type.STRING },
+                authors: { type: Type.ARRAY, items: { type: Type.STRING } },
+                publication: { type: Type.STRING },
+                publicationYear: { type: Type.STRING },
+                doiOrUrl: { type: Type.STRING },
+                isVerifiedMatch: { type: Type.BOOLEAN },
+                verificationNote: { type: Type.STRING },
+              },
+              required: ['title'],
+            },
+          },
+          styleConsiderations: { type: Type.STRING },
+        },
+        required: [
+          'workingTitle',
+          'topic',
+          'audience',
+          'searchIntent',
+          'primaryAngle',
+          'centralArgument',
+          'keyQuestions',
+          'editorialDirection',
+          'suggestedTakeaway',
+        ],
+      };
 
       const response = await ai.models.generateContent({
         model: modelToUse,
         contents: userPrompt,
-        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: briefResponseSchema,
+          temperature: 0.5,
+        },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !parsed.workingTitle || !parsed.centralArgument) {
-        throw new Error('Model did not return structured editorial brief');
+      const parsed = parseModelJson(response.text);
+      const validation = validateAndNormalizeEditorialBrief(parsed, {
+        projectTitle,
+        idea,
+        direction,
+        angles: safeAngles,
+        attachedStudies: safeStudies,
+      });
+
+      if (!validation.valid || !validation.brief) {
+        throw new Error(validation.error || 'Model did not return structured editorial brief');
       }
 
-      const now = new Date().toISOString();
+      const defaultMentions = briefMentionObjs.map((a: any) => a.title).filter(Boolean);
+      const defaultAvoid = excludedObjs
+        .map((a: any) => (a.coreArgument ? `${a.title}: ${a.coreArgument}` : a.title))
+        .filter(Boolean);
+
       const brief = {
-        ...parsed,
-        generatedAt: now,
-        updatedAt: now,
+        ...validation.brief,
+        secondaryFocus:
+          validation.brief.secondaryFocus ||
+          (secondaryAngleObj
+            ? `${secondaryAngleObj.title}: ${secondaryAngleObj.coreArgument}`
+            : ''),
+        briefMentions:
+          validation.brief.briefMentions.length > 0
+            ? validation.brief.briefMentions
+            : defaultMentions,
+        thingsToAvoid:
+          validation.brief.thingsToAvoid.length > 0
+            ? validation.brief.thingsToAvoid
+            : defaultAvoid,
       };
 
       return jsonResponse({ ok: true, brief, modelUsed: modelToUse });
@@ -668,8 +1034,7 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
+      const parsed = parseModelJson(response.text);
       if (!parsed || !Array.isArray(parsed.characteristics)) {
         throw new Error('Model did not return style analysis characteristics');
       }
@@ -680,7 +1045,7 @@ export async function handleApiRequest(
         characteristics: parsed.characteristics || [],
         commonCharacteristics: parsed.commonCharacteristics || parsed.characteristics.filter((c: any) => c.isCommonAcrossSamples),
         sampleSpecificCharacteristics: parsed.sampleSpecificCharacteristics || parsed.characteristics.filter((c: any) => !c.isCommonAcrossSamples),
-        reusableInstructions: parsed.reusableInstructions || [],
+        reusableInstructions: toStringArray(parsed.reusableInstructions),
         modelUsed: modelToUse,
       });
     }
@@ -695,7 +1060,29 @@ export async function handleApiRequest(
         throw new Error('Study title and content are required for analysis');
       }
 
-      const systemInstruction = `You are lead research editor for "Science of Gifts". Analyze academic study methodology, findings, and limitations, extracting structured facts and editorial claims. Output JSON: { "analysis": { "id", "studyId", "analyzedAt", "whatWasStudied", "whatTheStudyFound", "whatItMeans", "limitations", "editorialUse" }, "claims": [{ "id", "studyId", "studyTitle", "claimText", "claimType", "confidence", "createdAt" }] }`;
+      const systemInstruction = `You are lead research editor for "Science of Gifts". Analyze academic study methodology, findings, and limitations, extracting structured facts and editorial claims.
+Output ONLY valid JSON matching:
+{
+  "analysis": {
+    "whatWasStudied": "string",
+    "whatTheStudyFound": ["string"],
+    "whatItMeans": "string",
+    "whatItDoesNotEstablish": ["string"],
+    "methodology": "string",
+    "limitations": ["string"],
+    "editorialUse": ["string"],
+    "potentialArticleIdeas": [{ "title": "string", "angle": "string", "whyInteresting": "string", "searchIntent": "string" }]
+  },
+  "claims": [
+    {
+      "claimText": "string",
+      "claimType": "source_fact" | "editorial_interpretation" | "writing_suggestion",
+      "supportedBySource": "string",
+      "confidence": "high" | "moderate" | "preliminary",
+      "relevantLimitation": "string"
+    }
+  ]
+}`;
       const userPrompt = `STUDY:\n${JSON.stringify(study)}`;
 
       const response = await ai.models.generateContent({
@@ -704,16 +1091,48 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.2 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !parsed.analysis) {
+      const parsed = parseModelJson(response.text);
+      const rawAnalysis = parsed?.analysis || parsed;
+      if (!rawAnalysis || typeof rawAnalysis !== 'object') {
         throw new Error('Model did not return study analysis');
       }
 
+      const now = new Date().toISOString();
+      const analysis = {
+        id: rawAnalysis.id || `analysis-${Date.now()}`,
+        studyId: study.id || rawAnalysis.studyId || '',
+        analyzedAt: now,
+        modelUsed: modelToUse,
+        whatWasStudied: String(rawAnalysis.whatWasStudied || '').trim(),
+        whatTheStudyFound: toStringArray(rawAnalysis.whatTheStudyFound),
+        whatItMeans: String(rawAnalysis.whatItMeans || '').trim(),
+        whatItDoesNotEstablish: toStringArray(rawAnalysis.whatItDoesNotEstablish),
+        methodology: String(rawAnalysis.methodology || study.methodology || '').trim(),
+        limitations: toStringArray(rawAnalysis.limitations),
+        editorialUse: toStringArray(rawAnalysis.editorialUse),
+        potentialArticleIdeas: Array.isArray(rawAnalysis.potentialArticleIdeas)
+          ? rawAnalysis.potentialArticleIdeas
+          : [],
+      };
+
+      const rawClaims = Array.isArray(parsed?.claims) ? parsed.claims : [];
+      const claims = rawClaims.map((c: any, idx: number) => ({
+        id: c.id || `claim-${Date.now()}-${idx}`,
+        studyId: study.id || c.studyId || '',
+        studyTitle: study.title || c.studyTitle || '',
+        claimText: String(c.claimText || '').trim(),
+        claimType: c.claimType || 'source_fact',
+        supportedBySource: String(c.supportedBySource || c.evidenceQuote || study.title || '').trim(),
+        confidence: c.confidence || 'high',
+        relevantLimitation: c.relevantLimitation ? String(c.relevantLimitation).trim() : undefined,
+        createdAt: now,
+        updatedAt: now,
+      }));
+
       return jsonResponse({
         ok: true,
-        analysis: parsed.analysis,
-        claims: parsed.claims || [],
+        analysis,
+        claims,
         modelUsed: modelToUse,
       });
     }
@@ -737,15 +1156,15 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !Array.isArray(parsed.ideas)) {
+      const parsed = parseModelJson(response.text);
+      const ideasList = Array.isArray(parsed) ? parsed : parsed?.ideas;
+      if (!Array.isArray(ideasList)) {
         throw new Error('Model did not return research ideas');
       }
 
       return jsonResponse({
         ok: true,
-        ideas: parsed.ideas,
+        ideas: ideasList,
         modelUsed: modelToUse,
       });
     }
@@ -769,16 +1188,16 @@ export async function handleApiRequest(
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.6 },
       });
 
-      const text = response.text?.trim() || '';
-      const parsed = JSON.parse(text);
-      if (!parsed || !Array.isArray(parsed.outline)) {
+      const parsed = parseModelJson(response.text);
+      const outlineList = Array.isArray(parsed) ? parsed : parsed?.outline;
+      if (!Array.isArray(outlineList)) {
         throw new Error('Model did not return research outline');
       }
 
       return jsonResponse({
         ok: true,
-        outline: parsed.outline,
-        rationale: parsed.rationale || 'Mapped research studies to outline sections.',
+        outline: outlineList,
+        rationale: parsed?.rationale || 'Mapped research studies to outline sections.',
         modelUsed: modelToUse,
       });
     }

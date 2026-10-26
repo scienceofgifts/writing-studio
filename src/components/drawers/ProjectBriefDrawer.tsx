@@ -101,8 +101,8 @@ export const ProjectBriefDrawer: React.FC<ProjectBriefDrawerProps> = ({
 
       {/* Editorial Development Workflow Link */}
       {onOpenDevelop && (
-        <div className="px-5 py-2 bg-amber-50/70 border-b border-amber-200/60 flex items-center justify-between gap-2 text-xs">
-          <span className="text-amber-950">
+        <div className="px-5 py-2 bg-amber-50/70 border-b border-amber-200/60 flex items-center justify-between gap-2 text-xs min-w-0">
+          <span className="text-amber-950 min-w-0 flex-1 break-words">
             Developing from an idea? Explore 5 angles and synthesize this brief.
           </span>
           <button

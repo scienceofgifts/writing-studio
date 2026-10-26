@@ -22,6 +22,7 @@ import {
   Tag,
   Palette,
   ExternalLink,
+  Ban,
 } from 'lucide-react';
 import { WritingProject } from '../../types/project';
 import {
@@ -878,7 +879,7 @@ export const DraftPackageDrawer: React.FC<DraftPackageDrawerProps> = ({
               <ul className="space-y-1.5 text-xs text-[#403b35]">
                 {draftPackage.projectGuidance?.hardConstraints?.map((hc, idx) => (
                   <li key={idx} className="flex items-start gap-2">
-                    <span className="text-rose-700 font-bold shrink-0">✕</span>
+                    <span className="text-rose-700 font-bold shrink-0"><Ban className="w-4 h-4 text-rose-700 shrink-0 mt-0.5"/></span>
                     <span>{hc}</span>
                   </li>
                 ))}

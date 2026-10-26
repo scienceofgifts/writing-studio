@@ -46,6 +46,49 @@ export function formatAuthorsBibliographic(authors?: string[] | string): string 
   return `${formatted[0]} et al.`;
 }
 
+export interface PassageVerificationResult {
+  status: 'unique_match' | 'not_found' | 'ambiguous';
+  matchCount: number;
+  canInsert: boolean;
+  reason?: string;
+  htmlStart?: number;
+  htmlEnd?: number;
+  insertAtHtmlIndex?: number;
+  citationWindowHtml?: string;
+}
+
+/**
+ * Resolves a verified external link (DOI URL or direct HTTP/HTTPS URL) for a study, if available.
+ * Never fabricates links.
+ */
+export function resolveStudySourceLink(
+  study?: ResearchStudy | Partial<ResearchStudy> | any
+): { url?: string; doi?: string; displayLabel?: string } {
+  if (!study) return {};
+
+  const rawDoi = String(
+    study.doi || (study.doiOrUrl && /10\.\d{4,9}\//i.test(String(study.doiOrUrl)) ? study.doiOrUrl : '')
+  ).trim();
+
+  if (rawDoi) {
+    const cleanDoi = rawDoi
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+      .replace(/^doi:\s*/i, '')
+      .trim();
+    if (cleanDoi) {
+      const doiUrl = `https://doi.org/${cleanDoi}`;
+      return { url: doiUrl, doi: cleanDoi, displayLabel: `DOI: ${cleanDoi}` };
+    }
+  }
+
+  const candidateUrl = String(study.sourceUrl || study.url || study.doiOrUrl || '').trim();
+  if (candidateUrl && (candidateUrl.startsWith('http://') || candidateUrl.startsWith('https://'))) {
+    return { url: candidateUrl, displayLabel: candidateUrl };
+  }
+
+  return {};
+}
+
 /**
  * Formats a study into a clean, complete APA-style bibliographic reference HTML.
  * Never fabricates missing fields.
@@ -53,10 +96,10 @@ export function formatAuthorsBibliographic(authors?: string[] | string): string 
 export function formatBibliographicReference(
   study: ResearchStudy | Partial<ResearchStudy> | any
 ): string {
-  const authorStr = formatAuthorsBibliographic(study.authors);
-  const yearStr = study.publicationYear ? `(${study.publicationYear}).` : `(n.d.).`;
-  const cleanTitle = (study.title || 'Untitled Research Study').trim().replace(/\.$/, '');
-  const publicationStr = study.publication || study.sourceOrPublisher;
+  const authorStr = formatAuthorsBibliographic(study?.authors);
+  const yearStr = study?.publicationYear ? `(${study.publicationYear}).` : `(n.d.).`;
+  const cleanTitle = (study?.title || 'Untitled Research Study').trim().replace(/\.$/, '');
+  const publicationStr = study?.publication || study?.sourceOrPublisher;
 
   let ref = `<span class="ref-authors font-semibold">${escapeHtml(authorStr)}</span> ${escapeHtml(yearStr)} <span class="ref-title italic font-editorial">${escapeHtml(cleanTitle)}</span>.`;
 
@@ -64,18 +107,9 @@ export function formatBibliographicReference(
     ref += ` <span class="ref-publication">${escapeHtml(publicationStr)}</span>.`;
   }
 
-  // Add DOI or Source URL link if verified and present
-  const rawDoi = study.doi || (study.doiOrUrl && study.doiOrUrl.includes('10.') ? study.doiOrUrl : '');
-  const cleanDoi = rawDoi ? rawDoi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').trim() : '';
-
-  if (cleanDoi) {
-    const doiUrl = `https://doi.org/${cleanDoi}`;
-    ref += ` <a href="${doiUrl}" target="_blank" rel="noopener noreferrer" class="ref-link text-blue-700 hover:text-blue-900 underline font-mono text-[11px] break-all">${escapeHtml(doiUrl)}</a>`;
-  } else if (study.sourceUrl || study.url || study.doiOrUrl) {
-    const targetUrl = (study.sourceUrl || study.url || study.doiOrUrl || '').trim();
-    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
-      ref += ` <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="ref-link text-blue-700 hover:text-blue-900 underline font-mono text-[11px] break-all">${escapeHtml(targetUrl)}</a>`;
-    }
+  const { url } = resolveStudySourceLink(study);
+  if (url) {
+    ref += ` <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="ref-link text-blue-700 hover:text-blue-900 underline font-mono text-[11px] break-all">${escapeHtml(url)}</a>`;
   }
 
   return ref;
@@ -85,26 +119,19 @@ export function formatBibliographicReference(
  * Plain text format for Markdown and plain text export
  */
 export function formatPlainReference(study: ResearchStudy | Partial<ResearchStudy> | any): string {
-  const authorStr = formatAuthorsBibliographic(study.authors);
-  const yearStr = study.publicationYear ? `(${study.publicationYear}).` : `(n.d.).`;
-  const cleanTitle = (study.title || 'Untitled Research Study').trim().replace(/\.$/, '');
-  const publicationStr = study.publication || study.sourceOrPublisher;
+  const authorStr = formatAuthorsBibliographic(study?.authors);
+  const yearStr = study?.publicationYear ? `(${study.publicationYear}).` : `(n.d.).`;
+  const cleanTitle = (study?.title || 'Untitled Research Study').trim().replace(/\.$/, '');
+  const publicationStr = study?.publication || study?.sourceOrPublisher;
 
   let ref = `${authorStr} ${yearStr} ${cleanTitle}.`;
   if (publicationStr) {
     ref += ` ${publicationStr}.`;
   }
 
-  const rawDoi = study.doi || (study.doiOrUrl && study.doiOrUrl.includes('10.') ? study.doiOrUrl : '');
-  const cleanDoi = rawDoi ? rawDoi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').trim() : '';
-
-  if (cleanDoi) {
-    ref += ` https://doi.org/${cleanDoi}`;
-  } else if (study.sourceUrl || study.url || study.doiOrUrl) {
-    const targetUrl = (study.sourceUrl || study.url || study.doiOrUrl || '').trim();
-    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
-      ref += ` ${targetUrl}`;
-    }
+  const { url } = resolveStudySourceLink(study);
+  if (url) {
+    ref += ` ${url}`;
   }
 
   return ref;
@@ -116,8 +143,10 @@ export function formatPlainReference(study: ResearchStudy | Partial<ResearchStud
 export function splitBodyAndReferences(html: string): { bodyHtml: string; referencesSectionHtml: string } {
   if (!html) return { bodyHtml: '', referencesSectionHtml: '' };
 
-  // Match existing <section ... data-references-section ...> or <h2 ...>References</h2>
-  const sectionMatch = html.match(/<section[^>]*data-references-section[^>]*>[\s\S]*?<\/section>/i);
+  // Match existing <section ... data-references-section ...> or <section ... data-references-block ...>
+  const sectionMatch = html.match(
+    /(?:<hr\s*\/?>\s*)?<section[^>]*\b(?:data-references-section|data-references-block|\barticle-references|\breferences-section)[^>]*>[\s\S]*?<\/section>/i
+  );
   if (sectionMatch && sectionMatch.index !== undefined) {
     return {
       bodyHtml: html.slice(0, sectionMatch.index).trim(),
@@ -126,7 +155,7 @@ export function splitBodyAndReferences(html: string): { bodyHtml: string; refere
   }
 
   // Fallback match: <h2>References</h2> at the end
-  const h2Match = html.match(/<h2[^>]*>\s*References\s*<\/h2>[\s\S]*$/i);
+  const h2Match = html.match(/(?:<hr\s*\/?>\s*)?<h2[^>]*>\s*References\s*<\/h2>[\s\S]*$/i);
   if (h2Match && h2Match.index !== undefined) {
     return {
       bodyHtml: html.slice(0, h2Match.index).trim(),
@@ -146,8 +175,9 @@ export function extractCitationsFromHtml(
   const { bodyHtml } = splitBodyAndReferences(html);
   const citations: Array<{ studyId: string; currentNumber: number; match: string; index: number }> = [];
 
-  // Match citation markers: <sup ... data-study-id="xyz" ...>N</sup>
-  const citationRegex = /<sup\b[^>]*\bdata-study-id=["']([^"']+)["'][^>]*>(.*?)<\/sup>/gi;
+  // Match citation markers: <sup ... data-study-id="xyz" ...>N</sup> or data-citation-study-id="xyz"
+  const citationRegex =
+    /<sup\b[^>]*\b(?:data-study-id|data-citation-study-id)=["']([^"']+)["'][^>]*>(.*?)<\/sup>/gi;
   let match: RegExpExecArray | null;
 
   while ((match = citationRegex.exec(bodyHtml)) !== null) {
@@ -187,7 +217,8 @@ export function syncCitationsAndReferences(
   allStudies.forEach((s) => studiesMap.set(s.id, s));
 
   // 1. Scan in-text citations in order of first appearance
-  const citationRegex = /<sup\b[^>]*\bdata-study-id=["']([^"']+)["'][^>]*>(.*?)<\/sup>/gi;
+  const citationRegex =
+    /<sup\b[^>]*\b(?:data-study-id|data-citation-study-id)=["']([^"']+)["'][^>]*>(.*?)<\/sup>/gi;
   const orderedStudyIds: string[] = [];
   const studyIdToNumber = new Map<string, number>();
   const occurrenceCountMap = new Map<string, number>();
@@ -204,11 +235,10 @@ export function syncCitationsAndReferences(
   }
 
   // 2. Renumber in-text superscripts in bodyHtml
-  let updatedBody = bodyHtml.replace(
-    /<sup\b([^>]*\bdata-study-id=["']([^"']+)["'][^>]*)>(.*?)<\/sup>/gi,
-    (_full, attrs, studyId) => {
+  const updatedBody = bodyHtml.replace(
+    /<sup\b[^>]*\b(?:data-study-id|data-citation-study-id)=["']([^"']+)["'][^>]*>(.*?)<\/sup>/gi,
+    (_full, studyId) => {
       const assignedNum = studyIdToNumber.get(studyId) || 1;
-      // Preserve data attributes and styling
       return `<sup class="citation-ref text-[11px] font-semibold text-amber-900 select-none cursor-pointer" data-study-id="${escapeHtml(studyId)}">${assignedNum}</sup>`;
     }
   );
@@ -221,8 +251,7 @@ export function syncCitationsAndReferences(
     const authors = study?.authors || ['Science of Gifts Archive'];
     const publicationYear = study?.publicationYear;
     const publication = study?.publication || study?.sourceOrPublisher;
-    const doi = study?.doi;
-    const url = study?.sourceUrl || study?.doiOrUrl;
+    const { url, doi } = resolveStudySourceLink(study);
 
     return {
       citationNumber: num,
@@ -231,8 +260,8 @@ export function syncCitationsAndReferences(
       authors,
       publicationYear,
       publication,
-      doi,
-      url,
+      doi: doi || study?.doi,
+      url: url || study?.sourceUrl || study?.doiOrUrl,
       formattedReference: formatBibliographicReference(
         study || {
           id: studyId,
@@ -246,7 +275,6 @@ export function syncCitationsAndReferences(
 
   // 4. Generate or omit References Section
   if (citedStudies.length === 0) {
-    // If no citations are present, return body without reference section
     return {
       updatedHtml: updatedBody.trim(),
       citedStudies: [],
@@ -254,7 +282,6 @@ export function syncCitationsAndReferences(
     };
   }
 
-  // Construct styled References section
   let referencesSection = `\n<section class="article-references mt-10 pt-6 border-t border-[#e2dcd0]" data-references-section="true">\n`;
   referencesSection += `  <h2 class="font-editorial text-xl font-bold text-[#1e232a] mb-4 tracking-tight">References</h2>\n`;
   referencesSection += `  <ol class="references-list space-y-2.5 text-xs text-[#383229] pl-5 list-decimal font-ui leading-relaxed">\n`;
@@ -277,101 +304,611 @@ export function syncCitationsAndReferences(
   };
 }
 
+interface MappedPlainChar {
+  char: string;
+  htmlStart: number;
+  htmlEnd: number;
+}
+
 /**
- * Inserts a numbered citation into an article's HTML at the specified target passage.
- * Places the superscript before trailing punctuation (e.g. "claim<sup>1</sup>.")
+ * Builds a character-level index mapping normalized plain text characters (with citation badges
+ * and HTML tags stripped) back to their exact byte offsets in `bodyHtml`.
  */
-export function insertCitationIntoHtml(
-  html: string,
-  recommendation: CitationRecommendation,
-  allStudies: ResearchStudy[]
-): { updatedHtml: string; success: boolean; citationNumber: number } {
-  if (!html || !recommendation || !recommendation.studyId) {
-    return { updatedHtml: html, success: false, citationNumber: 0 };
-  }
+function buildBodyPlainIndex(bodyHtml: string): {
+  normText: string;
+  normMap: MappedPlainChar[];
+} {
+  const rawChars: MappedPlainChar[] = [];
+  let i = 0;
+  const len = bodyHtml.length;
 
-  const { bodyHtml } = splitBodyAndReferences(html);
-  const targetPassage = (recommendation.targetPassage || '').trim();
+  const citationSupRegex =
+    /^<sup\b[^>]*\b(?:data-study-id|data-citation-study-id)=["'][^"']+["'][^>]*>[\s\S]*?<\/sup>/i;
+  const blockEndTagRegex = /^<\/(?:p|h[1-6]|li|blockquote|div|section|article)\b[^>]*>/i;
+  const brTagRegex = /^<br\b[^>]*\/?>/i;
+  const genericTagRegex = /^<[^>]+>/;
+  const entityRegex = /^&(#?\w+);/;
 
-  if (!targetPassage) {
-    return { updatedHtml: html, success: false, citationNumber: 0 };
-  }
-
-  // Pre-calculate what citation number this study will receive
-  const existingCitations = extractCitationsFromHtml(bodyHtml);
-  let assignedNum = 1;
-  const existingForStudy = existingCitations.find((c) => c.studyId === recommendation.studyId);
-  if (existingForStudy) {
-    assignedNum = existingForStudy.currentNumber;
-  } else {
-    const uniqueStudies = new Set(existingCitations.map((c) => c.studyId));
-    assignedNum = uniqueStudies.size + 1;
-  }
-
-  const citationMarker = `<sup class="citation-ref text-[11px] font-semibold text-amber-900 select-none cursor-pointer" data-study-id="${escapeHtml(recommendation.studyId)}">${assignedNum}</sup>`;
-
-  // Helper to place citation before final punctuation if sentence ends with . ! ?
-  const addCitationBeforePunctuation = (sentence: string): string => {
-    const trimmed = sentence.trim();
-    // Don't add if already has citation marker for this study
-    if (trimmed.includes(`data-study-id="${recommendation.studyId}"`)) {
-      return trimmed;
-    }
-
-    const punctMatch = trimmed.match(/([.!?]+)(["']?)$/);
-    if (punctMatch && punctMatch.index !== undefined) {
-      const beforePunct = trimmed.slice(0, punctMatch.index);
-      const punct = punctMatch[0];
-      return `${beforePunct}${citationMarker}${punct}`;
-    }
-    return `${trimmed}${citationMarker}`;
+  const decodeEntity = (ent: string): string => {
+    const lower = ent.toLowerCase();
+    if (lower === 'nbsp' || lower === '#160') return ' ';
+    if (lower === 'amp' || lower === '#38') return '&';
+    if (lower === 'lt' || lower === '#60') return '<';
+    if (lower === 'gt' || lower === '#62') return '>';
+    if (lower === 'quot' || lower === '#34') return '"';
+    if (lower === '#039' || lower === '#39' || lower === 'apos') return "'";
+    if (lower === 'mdash' || lower === '#8212') return '—';
+    if (lower === 'ndash' || lower === '#8211') return '–';
+    return ' ';
   };
 
-  let newBody = bodyHtml;
-  let applied = false;
+  while (i < len) {
+    const rest = bodyHtml.slice(i);
 
-  // Strategy 1: Exact passage match
-  if (newBody.includes(targetPassage)) {
-    const citedPassage = addCitationBeforePunctuation(targetPassage);
-    newBody = newBody.replace(targetPassage, citedPassage);
-    applied = true;
-  } else {
-    // Strategy 2: Fuzzy sentence match (ignoring small whitespace differences)
-    const normalizedTarget = targetPassage.replace(/\s+/g, ' ').toLowerCase();
-    const cleanBodyText = newBody.replace(/<[^>]+>/g, ' ');
+    // 1. Skip citation <sup data-study-id="...">...</sup> completely
+    const supMatch = rest.match(citationSupRegex);
+    if (supMatch) {
+      i += supMatch[0].length;
+      continue;
+    }
 
-    if (cleanBodyText.toLowerCase().includes(normalizedTarget.slice(0, 40))) {
-      // Find sentence or clause matching target
-      const sentences = newBody.match(/[^<>.!?]+[.!?]+/g) || [];
-      for (const sent of sentences) {
-        const cleanSent = sent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
-        if (cleanSent.includes(normalizedTarget.slice(0, 30)) || normalizedTarget.includes(cleanSent.slice(0, 30))) {
-          const citedSent = addCitationBeforePunctuation(sent);
-          newBody = newBody.replace(sent, citedSent);
-          applied = true;
-          break;
-        }
+    // 2. Block end tag -> emit newline separator so sentences across blocks do not merge
+    const blockMatch = rest.match(blockEndTagRegex) || rest.match(brTagRegex);
+    if (blockMatch) {
+      rawChars.push({ char: '\n', htmlStart: i, htmlEnd: i + blockMatch[0].length });
+      i += blockMatch[0].length;
+      continue;
+    }
+
+    // 3. Other HTML tags -> skip
+    const tagMatch = rest.match(genericTagRegex);
+    if (tagMatch) {
+      i += tagMatch[0].length;
+      continue;
+    }
+
+    // 4. HTML entities -> decode
+    if (bodyHtml[i] === '&') {
+      const entMatch = rest.match(entityRegex);
+      if (entMatch) {
+        const decoded = decodeEntity(entMatch[1]);
+        rawChars.push({ char: decoded, htmlStart: i, htmlEnd: i + entMatch[0].length });
+        i += entMatch[0].length;
+        continue;
+      }
+    }
+
+    // 5. Regular character
+    rawChars.push({ char: bodyHtml[i], htmlStart: i, htmlEnd: i + 1 });
+    i += 1;
+  }
+
+  // Collapse horizontal whitespace runs while preserving block boundary newlines
+  const normMap: MappedPlainChar[] = [];
+  for (const item of rawChars) {
+    if (item.char === '\n') {
+      if (normMap.length > 0 && normMap[normMap.length - 1].char === ' ') {
+        normMap[normMap.length - 1] = item;
+      } else if (normMap.length === 0 || normMap[normMap.length - 1].char !== '\n') {
+        normMap.push(item);
+      }
+    } else if (/\s/.test(item.char)) {
+      if (
+        normMap.length > 0 &&
+        normMap[normMap.length - 1].char !== ' ' &&
+        normMap[normMap.length - 1].char !== '\n'
+      ) {
+        normMap.push({ char: ' ', htmlStart: item.htmlStart, htmlEnd: item.htmlEnd });
+      }
+    } else {
+      normMap.push(item);
+    }
+  }
+
+  // Trim leading/trailing whitespace
+  while (normMap.length > 0 && /\s/.test(normMap[0].char)) {
+    normMap.shift();
+  }
+  while (normMap.length > 0 && /\s/.test(normMap[normMap.length - 1].char)) {
+    normMap.pop();
+  }
+
+  return {
+    normText: normMap.map((c) => c.char).join(''),
+    normMap,
+  };
+}
+
+/**
+ * Normalizes a target passage string for deterministic comparison and deduplication.
+ */
+export function normalizePassageText(passage: string): string {
+  if (!passage) return '';
+  return passage
+    .replace(/<sup\b[^>]*\b(?:data-study-id|data-citation-study-id)=["'][^"']+["'][^>]*>[\s\S]*?<\/sup>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/gi, "'")
+    .replace(/\s*\[\d+\]\s*(?=[.!?]|$)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function normalizePassageKey(passage: string): string {
+  return normalizePassageText(passage)
+    .toLowerCase()
+    .replace(/[.!?]+$/, '')
+    .trim();
+}
+
+/**
+ * Verifies that a target passage exists unambiguously in the article HTML.
+ * Rejects missing passages, short/generic fragments, and ambiguous passages that appear multiple times.
+ */
+export function verifyTargetPassageInHtml(
+  htmlContent: string,
+  targetPassage: string
+): PassageVerificationResult {
+  const { bodyHtml } = splitBodyAndReferences(htmlContent || '');
+  const cleanTarget = normalizePassageText(targetPassage);
+
+  if (!cleanTarget || cleanTarget.length < 10) {
+    return {
+      status: 'not_found',
+      matchCount: 0,
+      canInsert: false,
+      reason: 'Target passage is empty or too short to match safely.',
+    };
+  }
+
+  const { normText, normMap } = buildBodyPlainIndex(bodyHtml);
+  if (!normText) {
+    return {
+      status: 'not_found',
+      matchCount: 0,
+      canInsert: false,
+      reason: 'Article body is empty.',
+    };
+  }
+
+  const findOccurrences = (needle: string, caseInsensitive: boolean): Array<{ start: number; end: number }> => {
+    const haystack = caseInsensitive ? normText.toLowerCase() : normText;
+    const search = caseInsensitive ? needle.toLowerCase() : needle;
+    if (!search) return [];
+
+    const results: Array<{ start: number; end: number }> = [];
+    let pos = 0;
+    while (pos <= haystack.length - search.length) {
+      const idx = haystack.indexOf(search, pos);
+      if (idx === -1) break;
+
+      const endIdx = idx + search.length;
+      const charBefore = idx > 0 ? haystack[idx - 1] : ' ';
+      const charAfter = endIdx < haystack.length ? haystack[endIdx] : ' ';
+      const startsAtWordBoundary = !/[a-z0-9]/i.test(charBefore) || !/[a-z0-9]/i.test(search[0]);
+      const endsAtWordBoundary =
+        !/[a-z0-9]/i.test(charAfter) || !/[a-z0-9]/i.test(search[search.length - 1]);
+
+      if (startsAtWordBoundary && endsAtWordBoundary) {
+        results.push({ start: idx, end: endIdx });
+      }
+      pos = idx + 1;
+    }
+    return results;
+  };
+
+  let matches = findOccurrences(cleanTarget, false);
+  if (matches.length === 0) {
+    matches = findOccurrences(cleanTarget, true);
+  }
+  if (matches.length === 0 && /[.!?]+$/.test(cleanTarget)) {
+    const withoutPunct = cleanTarget.replace(/[.!?]+$/, '').trim();
+    if (withoutPunct.length >= 10) {
+      matches = findOccurrences(withoutPunct, false);
+      if (matches.length === 0) {
+        matches = findOccurrences(withoutPunct, true);
       }
     }
   }
 
-  if (!applied) {
-    // Strategy 3: Append before the last closing </p> in the article if passage cannot be mapped literally
-    const lastPIndex = newBody.lastIndexOf('</p>');
-    if (lastPIndex !== -1) {
-      newBody = `${newBody.slice(0, lastPIndex)} ${citationMarker}${newBody.slice(lastPIndex)}`;
-      applied = true;
+  if (matches.length === 0) {
+    return {
+      status: 'not_found',
+      matchCount: 0,
+      canInsert: false,
+      reason: 'Target passage does not match any sentence in the current article text.',
+    };
+  }
+
+  if (matches.length > 1) {
+    return {
+      status: 'ambiguous',
+      matchCount: matches.length,
+      canInsert: false,
+      reason: `Target passage appears ${matches.length} times in the article and cannot be matched unambiguously.`,
+    };
+  }
+
+  const match = matches[0];
+  const firstChar = normMap[match.start];
+  const lastChar = normMap[match.end - 1];
+
+  // Determine exact HTML insertion index (before terminal sentence punctuation if present)
+  let insertAtHtmlIndex = lastChar.htmlEnd;
+  let postMatchBoundaryHtml = lastChar.htmlEnd;
+
+  if (/[.!?]/.test(lastChar.char)) {
+    insertAtHtmlIndex = lastChar.htmlStart;
+    postMatchBoundaryHtml = lastChar.htmlEnd;
+  } else if (match.end < normMap.length && /[.!?]/.test(normMap[match.end].char)) {
+    insertAtHtmlIndex = normMap[match.end].htmlStart;
+    postMatchBoundaryHtml = normMap[match.end].htmlEnd;
+  } else {
+    // Advance past any immediately closing inline tags (</em>, </strong>, </a>, </span>)
+    const afterSlice = bodyHtml.slice(insertAtHtmlIndex);
+    const closingInlineMatch = afterSlice.match(/^(?:<\/(?:em|strong|i|b|u|a|span|code)>)+/i);
+    if (closingInlineMatch) {
+      insertAtHtmlIndex += closingInlineMatch[0].length;
+      postMatchBoundaryHtml = insertAtHtmlIndex;
     }
   }
 
-  // Now synchronize all citation numbers and the Reference list
+  // Also capture any trailing citation <sup ...> tags immediately after postMatchBoundaryHtml
+  const nextPlainCharHtmlStart =
+    match.end < normMap.length
+      ? normMap[match.end]. char && /[.!?]/.test(normMap[match.end].char) && match.end + 1 < normMap.length
+        ? normMap[match.end + 1].htmlStart
+        : normMap[match.end].htmlStart
+      : bodyHtml.length;
+
+  const citationWindowHtml = bodyHtml.slice(
+    firstChar.htmlStart,
+    Math.max(postMatchBoundaryHtml, nextPlainCharHtmlStart)
+  );
+
+  return {
+    status: 'unique_match',
+    matchCount: 1,
+    canInsert: true,
+    htmlStart: firstChar.htmlStart,
+    htmlEnd: lastChar.htmlEnd,
+    insertAtHtmlIndex,
+    citationWindowHtml,
+  };
+}
+
+/**
+ * Checks whether a specific target passage in the article is already cited with `studyId`.
+ */
+export function isPassageCitedWithStudy(
+  htmlContent: string,
+  targetPassage: string,
+  studyId: string
+): boolean {
+  if (!htmlContent || !studyId) return false;
+  if (!targetPassage || !targetPassage.trim()) return false;
+
+  const verification = verifyTargetPassageInHtml(htmlContent, targetPassage);
+  if (verification.status !== 'unique_match' || !verification.citationWindowHtml) {
+    return false;
+  }
+
+  const studyAttrRegex = new RegExp(
+    `\\b(?:data-study-id|data-citation-study-id)=["']${escapeRegex(studyId)}["']`,
+    'i'
+  );
+  return studyAttrRegex.test(verification.citationWindowHtml);
+}
+
+/**
+ * Inserts a numbered citation into an article's HTML at the specified target passage.
+ * - Requires an unambiguous match of `recommendation.targetPassage` in the current article HTML.
+ * - NEVER falls back to appending at the end of the article or into an unrelated paragraph.
+ * - Idempotent: if the matched passage already cites `recommendation.studyId`, does not insert a duplicate marker.
+ */
+export function insertCitationIntoHtml(
+  html: string,
+  recommendation: CitationRecommendation | { studyId: string; targetPassage: string },
+  allStudies: ResearchStudy[]
+): {
+  updatedHtml: string;
+  citedStudies: CitedStudyReference[];
+  success: boolean;
+  citationNumber: number;
+  alreadyCited?: boolean;
+  errorReason?: string;
+} {
+  if (!html || !recommendation || !recommendation.studyId) {
+    return {
+      updatedHtml: html,
+      citedStudies: [],
+      success: false,
+      citationNumber: 0,
+      errorReason: 'Missing article content or study ID.',
+    };
+  }
+
+  const studyExists = allStudies.some((s) => s.id === recommendation.studyId);
+  if (!studyExists) {
+    return {
+      updatedHtml: html,
+      citedStudies: syncCitationsAndReferences(html, allStudies).citedStudies,
+      success: false,
+      citationNumber: 0,
+      errorReason: `Study "${recommendation.studyId}" does not exist in the Research Library.`,
+    };
+  }
+
+  const targetPassage = (recommendation.targetPassage || '').trim();
+  if (!targetPassage) {
+    return {
+      updatedHtml: html,
+      citedStudies: syncCitationsAndReferences(html, allStudies).citedStudies,
+      success: false,
+      citationNumber: 0,
+      errorReason: 'No target passage specified. Use "Draft Research Passage" to write a research-backed passage first.',
+    };
+  }
+
+  const verification = verifyTargetPassageInHtml(html, targetPassage);
+  if (!verification.canInsert || verification.status !== 'unique_match' || verification.insertAtHtmlIndex === undefined) {
+    return {
+      updatedHtml: html,
+      citedStudies: syncCitationsAndReferences(html, allStudies).citedStudies,
+      success: false,
+      citationNumber: 0,
+      errorReason: verification.reason || 'Could not unambiguously locate target passage in the current draft.',
+    };
+  }
+
+  const { bodyHtml } = splitBodyAndReferences(html);
+
+  // Idempotency check: if this passage already carries a citation marker for this study, do not duplicate
+  const studyAttrRegex = new RegExp(
+    `\\b(?:data-study-id|data-citation-study-id)=["']${escapeRegex(recommendation.studyId)}["']`,
+    'i'
+  );
+  if (verification.citationWindowHtml && studyAttrRegex.test(verification.citationWindowHtml)) {
+    const syncResult = syncCitationsAndReferences(bodyHtml, allStudies);
+    const assigned =
+      syncResult.citedStudies.find((c) => c.studyId === recommendation.studyId)?.citationNumber || 1;
+    return {
+      updatedHtml: syncResult.updatedHtml,
+      citedStudies: syncResult.citedStudies,
+      success: true,
+      citationNumber: assigned,
+      alreadyCited: true,
+    };
+  }
+
+  const tempMarker = `<sup class="citation-ref text-[11px] font-semibold text-amber-900 select-none cursor-pointer" data-study-id="${escapeHtml(recommendation.studyId)}">0</sup>`;
+
+  const newBody =
+    bodyHtml.slice(0, verification.insertAtHtmlIndex) +
+    tempMarker +
+    bodyHtml.slice(verification.insertAtHtmlIndex);
+
   const syncResult = syncCitationsAndReferences(newBody, allStudies);
+  const assignedNum =
+    syncResult.citedStudies.find((c) => c.studyId === recommendation.studyId)?.citationNumber || 1;
 
   return {
     updatedHtml: syncResult.updatedHtml,
-    success: applied,
+    citedStudies: syncResult.citedStudies,
+    success: true,
     citationNumber: assignedNum,
+    alreadyCited: false,
   };
+}
+
+/**
+ * Workflow B: Inserts an explicitly approved, research-backed passage together with its
+ * numbered in-text citation and updates the References section.
+ */
+export function insertDraftedPassageWithCitation(
+  html: string,
+  draftedPassage: string,
+  studyId: string,
+  allStudies: ResearchStudy[],
+  options?: {
+    anchorPassageContext?: string;
+    targetSectionHeading?: string;
+  }
+): {
+  updatedHtml: string;
+  citedStudies: CitedStudyReference[];
+  success: boolean;
+  citationNumber: number;
+  insertedPassage: string;
+  alreadyCited?: boolean;
+  errorReason?: string;
+} {
+  const cleanPassage = normalizePassageText(draftedPassage);
+  if (!cleanPassage || cleanPassage.length < 10) {
+    return {
+      updatedHtml: html,
+      citedStudies: syncCitationsAndReferences(html || '', allStudies).citedStudies,
+      success: false,
+      citationNumber: 0,
+      insertedPassage: '',
+      errorReason: 'Drafted research passage cannot be empty.',
+    };
+  }
+
+  if (!studyId || !allStudies.some((s) => s.id === studyId)) {
+    return {
+      updatedHtml: html,
+      citedStudies: syncCitationsAndReferences(html || '', allStudies).citedStudies,
+      success: false,
+      citationNumber: 0,
+      insertedPassage: cleanPassage,
+      errorReason: 'Referenced study was not found in the Research Library.',
+    };
+  }
+
+  // Idempotency check: if the exact drafted passage already exists in the article, just ensure it is cited
+  const existingCheck = verifyTargetPassageInHtml(html || '', cleanPassage);
+  if (existingCheck.status === 'unique_match') {
+    const res = insertCitationIntoHtml(
+      html || '',
+      { studyId, targetPassage: cleanPassage },
+      allStudies
+    );
+    return {
+      ...res,
+      insertedPassage: cleanPassage,
+    };
+  }
+
+  const { bodyHtml } = splitBodyAndReferences(html || '');
+  const tempMarker = `<sup class="citation-ref text-[11px] font-semibold text-amber-900 select-none cursor-pointer" data-study-id="${escapeHtml(studyId)}">0</sup>`;
+
+  // Place citation marker before terminal punctuation of the drafted passage
+  const passageWithPunct = /[.!?]$/.test(cleanPassage) ? cleanPassage : `${cleanPassage}.`;
+  const punctMatch = passageWithPunct.match(/([.!?]+)(["']?)$/);
+  const citedParagraphHtml =
+    punctMatch && punctMatch.index !== undefined
+      ? `<p>${escapeHtml(passageWithPunct.slice(0, punctMatch.index))}${tempMarker}${escapeHtml(punctMatch[0])}</p>`
+      : `<p>${escapeHtml(passageWithPunct)}${tempMarker}</p>`;
+
+  let newBody = bodyHtml.trim();
+  let insertedAfterAnchor = false;
+
+  // 1. Try inserting after anchorPassageContext if uniquely matched in a <p> block
+  if (options?.anchorPassageContext && options.anchorPassageContext.trim().length >= 10) {
+    const anchorCheck = verifyTargetPassageInHtml(newBody, options.anchorPassageContext);
+    if (anchorCheck.status === 'unique_match' && anchorCheck.htmlEnd !== undefined) {
+      const closePIdx = newBody.indexOf('</p>', anchorCheck.htmlEnd);
+      if (closePIdx !== -1) {
+        const insertPoint = closePIdx + 4;
+        newBody = `${newBody.slice(0, insertPoint)}\n${citedParagraphHtml}${newBody.slice(insertPoint)}`;
+        insertedAfterAnchor = true;
+      }
+    }
+  }
+
+  // 2. Otherwise try inserting into the section matching targetSectionHeading
+  if (!insertedAfterAnchor && options?.targetSectionHeading && options.targetSectionHeading.trim()) {
+    const cleanHeading = normalizePassageText(options.targetSectionHeading).toLowerCase();
+    const headingRegex = /<h([23])\b[^>]*>([\s\S]*?)<\/h\1>/gi;
+    let hMatch: RegExpExecArray | null;
+    while ((hMatch = headingRegex.exec(newBody)) !== null) {
+      const headingText = normalizePassageText(hMatch[2]).toLowerCase();
+      if (headingText && (headingText === cleanHeading || headingText.includes(cleanHeading) || cleanHeading.includes(headingText))) {
+        const sectionStart = hMatch.index + hMatch[0].length;
+        const restAfterHeading = newBody.slice(sectionStart);
+        const nextHeadingMatch = restAfterHeading.match(/<h[23]\b[^>]*>/i);
+        const sectionEnd =
+          nextHeadingMatch && nextHeadingMatch.index !== undefined
+            ? sectionStart + nextHeadingMatch.index
+            : newBody.length;
+        newBody = `${newBody.slice(0, sectionEnd).trimEnd()}\n${citedParagraphHtml}\n${newBody.slice(sectionEnd).trimStart()}`.trim();
+        insertedAfterAnchor = true;
+        break;
+      }
+    }
+  }
+
+  // 3. Otherwise append as a new paragraph at the end of the article body (before References)
+  if (!insertedAfterAnchor) {
+    newBody = newBody ? `${newBody}\n${citedParagraphHtml}` : citedParagraphHtml;
+  }
+
+  const syncResult = syncCitationsAndReferences(newBody, allStudies);
+  const assignedNum =
+    syncResult.citedStudies.find((c) => c.studyId === studyId)?.citationNumber || 1;
+
+  return {
+    updatedHtml: syncResult.updatedHtml,
+    citedStudies: syncResult.citedStudies,
+    success: true,
+    citationNumber: assignedNum,
+    insertedPassage: passageWithPunct,
+    alreadyCited: false,
+  };
+}
+
+/**
+ * Deduplicates and merges incoming citation recommendations with previously stored recommendations.
+ * - Preserves dismissed and accepted statuses across re-runs.
+ * - Deduplicates by (studyId, workflowType, normalizedTargetPassage / section).
+ * - Syncs accepted state only when the specific passage is actually cited with that study in `currentHtml`.
+ */
+export function mergeCitationRecommendations(
+  existingRecs: CitationRecommendation[],
+  incomingRecs: CitationRecommendation[],
+  currentHtml: string
+): CitationRecommendation[] {
+  const buildRecKey = (r: CitationRecommendation): string => {
+    const wf = r.workflowType || (r.targetPassage?.trim() ? 'cite_existing' : 'draft_passage');
+    const passageKey =
+      wf === 'cite_existing'
+        ? normalizePassageKey(r.targetPassage || '')
+        : normalizePassageKey(r.targetSectionHeading || r.anchorPassageContext || r.relevantFinding || '');
+    return `${r.studyId}::${wf}::${passageKey}`;
+  };
+
+  const existingByKey = new Map<string, CitationRecommendation>();
+  for (const oldRec of existingRecs || []) {
+    if (!oldRec || !oldRec.studyId) continue;
+    existingByKey.set(buildRecKey(oldRec), oldRec);
+  }
+
+  const mergedMap = new Map<string, CitationRecommendation>();
+
+  // 1. Keep previously reviewed (dismissed or accepted) recommendations so re-running never loses history
+  for (const [key, oldRec] of existingByKey.entries()) {
+    if (oldRec.status === 'dismissed' || oldRec.status === 'accepted') {
+      mergedMap.set(key, oldRec);
+    }
+  }
+
+  // 2. Merge incoming recommendations, deduplicating by key and respecting prior user decisions
+  for (const newRec of incomingRecs || []) {
+    if (!newRec || !newRec.studyId) continue;
+    const key = buildRecKey(newRec);
+    const existing = existingByKey.get(key);
+
+    if (existing && existing.status === 'dismissed') {
+      mergedMap.set(key, existing);
+      continue;
+    }
+
+    const isAlreadyCitedInDoc =
+      newRec.targetPassage && newRec.targetPassage.trim()
+        ? isPassageCitedWithStudy(currentHtml, newRec.targetPassage, newRec.studyId)
+        : existing?.status === 'accepted' && existing.targetPassage
+        ? isPassageCitedWithStudy(currentHtml, existing.targetPassage, existing.studyId)
+        : false;
+
+    if (isAlreadyCitedInDoc) {
+      mergedMap.set(key, {
+        ...(existing || newRec),
+        ...newRec,
+        id: existing?.id || newRec.id,
+        status: 'accepted',
+      });
+      continue;
+    }
+
+    if (existing && existing.status === 'accepted') {
+      mergedMap.set(key, existing);
+      continue;
+    }
+
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, {
+        ...newRec,
+        id: existing?.id || newRec.id,
+        proposedPassage: existing?.proposedPassage || newRec.proposedPassage,
+        draftStatus: existing?.draftStatus || newRec.draftStatus,
+      });
+    }
+  }
+
+  return Array.from(mergedMap.values());
 }
 
 /**
@@ -381,17 +918,21 @@ export function removeCitationFromHtml(
   html: string,
   studyId: string,
   allStudies: ResearchStudy[]
-): { updatedHtml: string; success: boolean } {
-  if (!html || !studyId) return { updatedHtml: html, success: false };
+): { updatedHtml: string; citedStudies: CitedStudyReference[]; success: boolean } {
+  if (!html || !studyId) return { updatedHtml: html, citedStudies: [], success: false };
 
   const { bodyHtml } = splitBodyAndReferences(html);
   const regex = new RegExp(
-    `<sup\\b[^>]*\\bdata-study-id=["']${escapeRegex(studyId)}["'][^>]*>.*?<\\/sup>`,
+    `<sup\\b[^>]*\\b(?:data-study-id|data-citation-study-id)=["']${escapeRegex(studyId)}["'][^>]*>.*?<\\/sup>`,
     'gi'
   );
 
   if (!regex.test(bodyHtml)) {
-    return { updatedHtml: html, success: false };
+    return {
+      updatedHtml: html,
+      citedStudies: syncCitationsAndReferences(html, allStudies).citedStudies,
+      success: false,
+    };
   }
 
   const cleanedBody = bodyHtml.replace(regex, '');
@@ -399,6 +940,7 @@ export function removeCitationFromHtml(
 
   return {
     updatedHtml: syncResult.updatedHtml,
+    citedStudies: syncResult.citedStudies,
     success: true,
   };
 }
@@ -419,3 +961,4 @@ function escapeHtml(str: string): string {
 function escapeRegex(str: string): string {
   return str.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
 }
+

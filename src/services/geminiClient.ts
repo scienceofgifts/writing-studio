@@ -33,6 +33,10 @@ import {
 import { storage } from './storage';
 import { extractPlainTextFromHtml } from '../utils/richText';
 import { extractUrlsFromHtml } from '../utils/urlUtils';
+import {
+  validateBriefGenerationInputs,
+  validateAndNormalizeEditorialBrief,
+} from '../utils/editorialDevelopmentUtils';
 import { assemblePrompt } from './promptAssembly';
 import { ModelId, AIActionType } from '../types/models';
 import { resolveEffectiveModelId, getModelDefinition } from './modelRegistry';
@@ -819,6 +823,18 @@ export const geminiService = {
 
     const idea = options.idea || project.editorialDevelopment?.originalIdea;
 
+    const inputCheck = validateBriefGenerationInputs({
+      projectTitle: project.title,
+      idea,
+      angles,
+      direction,
+    });
+    if (!inputCheck.valid) {
+      const msg = inputCheck.error || 'Missing required inputs for editorial brief.';
+      toast.error('Editorial Direction Incomplete', msg);
+      throw new Error(msg);
+    }
+
     const attachedStudies = (project.attachedStudyIds || [])
       .map((id) => storage.getResearchStudy(id))
       .filter(Boolean);
@@ -829,6 +845,7 @@ export const geminiService = {
       ? storage.getStyleProfile(project.styleProfileId)
       : undefined;
 
+    let alreadyToasted = false;
     try {
       const res = await fetch(getApiUrl('/api/gemini/create-editorial-brief'), {
         method: 'POST',
@@ -851,6 +868,7 @@ export const geminiService = {
         const errorData = await res.json().catch(() => ({}));
         const errorMsg = errorData.error || `Server returned ${res.status}`;
         toast.error('AI Request Failed', errorMsg);
+        alreadyToasted = true;
         throw new Error(errorMsg);
       }
 
@@ -858,18 +876,36 @@ export const geminiService = {
       if (!data.ok) {
         const errorMsg = data.error || 'Failed to synthesize editorial brief.';
         toast.error('AI Request Failed', errorMsg);
+        alreadyToasted = true;
+        throw new Error(errorMsg);
+      }
+
+      const validation = validateAndNormalizeEditorialBrief(data.brief, {
+        projectTitle: project.title,
+        idea,
+        direction,
+        angles,
+        attachedStudies,
+      });
+
+      if (!validation.valid || !validation.brief) {
+        const errorMsg = validation.error || 'Model did not return a valid structured editorial brief.';
+        toast.error('AI Request Failed', errorMsg);
+        alreadyToasted = true;
         throw new Error(errorMsg);
       }
 
       return {
-        ok: Boolean(data.ok),
-        brief: data.brief,
+        ok: true,
+        brief: validation.brief,
         modelUsed: data.modelUsed || effectiveModel,
         durationMs: data.durationMs,
       };
     } catch (err: any) {
       console.error('Error creating editorial brief:', err);
-      toast.error('AI Request Failed', err?.message || 'Could not synthesize editorial brief.');
+      if (!alreadyToasted) {
+        toast.error('AI Request Failed', err?.message || 'Could not synthesize editorial brief.');
+      }
       throw err;
     }
   },

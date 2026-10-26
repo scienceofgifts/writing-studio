@@ -326,29 +326,154 @@ export async function handleApiRequest(
     // 3. POST /api/gemini/find-citations
     if (path === '/api/gemini/find-citations' && request.method === 'POST') {
       const ai = requireAi();
-      const { documentContent = '', studies = [] } = body;
+      const { documentContent = '', studies = [], projectTitle = '' } = body;
       const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.6-flash');
 
-      if (!documentContent) {
+      if (!documentContent || !String(documentContent).trim()) {
         return jsonResponse({ ok: true, recommendations: [], gaps: [], rationale: 'Empty document provided.' });
       }
 
-      const systemInstruction = `You are Senior Research Editor for "Science of Gifts". Identify exact sentences making empirical claims substantiated by studies in the library. Output JSON: { "recommendations": [{ "studyId", "targetPassage", "relevantFinding", "explanation", "confidence" }], "gaps": [{ "claimInArticle", "topicNeeded", "suggestion" }], "rationale" }`;
-      const userPrompt = `DOCUMENT:\n${documentContent}\n\nSTUDIES:\n${JSON.stringify(studies)}`;
+      const systemInstruction = `You are Senior Research Verification Editor for "Science of Gifts".
+Your mission is strict, evidence-first research verification. Precision and defensibility always take priority over quantity.
+Returning 0 recommendations is completely valid and preferred over weak, generic, or forced topical matches.
+
+STRICT EVIDENCE RULES:
+1. A study being broadly about the same topic as the article is NEVER sufficient reason to cite an existing sentence.
+2. Distinguish two distinct workflows:
+   - WORKFLOW A ("workflowType": "cite_existing"):
+     Use ONLY when an existing sentence in the article makes a specific factual or empirical claim that is directly substantiated by a specific finding or claim in the study record.
+     - "targetPassage" MUST be copied verbatim from the article (an exact, complete sentence that appears once in the article).
+     - "isVerifiedMatch" MUST be true ONLY when the study directly supports that exact sentence's claim.
+   - WORKFLOW B ("workflowType": "draft_passage"):
+     Use when a study in the library has genuine empirical findings relevant to the article's argument, but NO existing sentence in the article states that specific finding yet.
+     - Set "workflowType": "draft_passage", "isVerifiedMatch": false, "targetPassage": "".
+     - Specify "targetSectionHeading" (the heading in the article where this study's finding belongs) and/or "anchorPassageContext" (an existing sentence after which a new research-backed passage would naturally follow).
+     - Provide "proposedPassage": a concise 1-2 sentence editorial passage written in the "Science of Gifts" voice (no em dashes, no markdown, no hype) that accurately states the study's finding without inventing numbers, sample sizes, or conclusions beyond the provided study data.
+3. Classify "evidenceType" accurately:
+   - "direct_empirical": Direct empirical result measured in the study.
+   - "author_interpretation": Study authors' theoretical interpretation.
+   - "background_context": General background context (not direct empirical proof of the article's claim).
+   - "editorial_suggestion": Editorial synthesis or suggestion.
+4. For every recommendation, you MUST populate:
+   - "studyId": Exact ID of the study from the provided library list.
+   - "relevantFinding": The specific finding or result from the study.
+   - "supportingEvidence": Verbatim or close factual evidence from the study's findings, claims, or abstract in the library.
+   - "limitationsOrQualifications": Any sample constraints, methodological caveats, or scope differences between the study and the article passage.
+   - "confidence": "verified_empirical" | "conceptual_support" | "partial_limitation".
+   - "explanation": Clear editorial rationale explaining the exact connection.
+5. NEVER invent study findings, statistics, sample sizes, DOIs, or URLs. If a study record has insufficient evidence in the library to verify a match, set "isVerifiedMatch": false and explain what requires verification.
+
+Output ONLY valid JSON matching:
+{
+  "recommendations": [
+    {
+      "studyId": "string",
+      "workflowType": "cite_existing" | "draft_passage",
+      "targetPassage": "string",
+      "targetSectionHeading": "string",
+      "anchorPassageContext": "string",
+      "proposedPassage": "string",
+      "relevantFinding": "string",
+      "supportingEvidence": "string",
+      "limitationsOrQualifications": "string",
+      "explanation": "string",
+      "confidence": "verified_empirical" | "conceptual_support" | "partial_limitation",
+      "evidenceType": "direct_empirical" | "author_interpretation" | "background_context" | "editorial_suggestion",
+      "isVerifiedMatch": boolean,
+      "verificationNote": "string"
+    }
+  ],
+  "gaps": [{ "claimInArticle": "string", "topicNeeded": "string", "suggestion": "string" }],
+  "rationale": "string"
+}`;
+      const userPrompt = `ARTICLE TITLE: "${projectTitle}"\n\nARTICLE DOCUMENT:\n${documentContent}\n\nRESEARCH LIBRARY STUDIES:\n${JSON.stringify(studies)}`;
 
       const response = await ai.models.generateContent({
         model: modelToUse,
         contents: userPrompt,
-        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.3 },
+        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.1 },
       });
 
       const text = response.text?.trim() || '{}';
       const parsed = JSON.parse(text);
       return jsonResponse({
         ok: true,
-        recommendations: parsed.recommendations || [],
-        gaps: parsed.gaps || [],
-        rationale: parsed.rationale || 'Identified empirical research citations.',
+        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [],
+        gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
+        rationale: parsed.rationale || 'Completed evidence-first citation verification.',
+        modelUsed: modelToUse,
+      });
+    }
+
+    // 3b. POST /api/gemini/draft-research-passage
+    if (path === '/api/gemini/draft-research-passage' && request.method === 'POST') {
+      const ai = requireAi();
+      const {
+        projectTitle = '',
+        documentContent = '',
+        study = {},
+        targetSectionHeading = '',
+        anchorPassageContext = '',
+        editorialGuidance = '',
+      } = body;
+      const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.6-flash');
+
+      if (!study || !study.id || !study.title) {
+        return jsonResponse({ ok: false, error: 'A valid research study is required to draft a passage.' }, 400);
+      }
+
+      const systemInstruction = `You are Senior Research Editor for "Science of Gifts".
+Draft a concise, 1-2 sentence research-backed editorial passage that integrates a specific empirical finding from the provided study into the article.
+STRICT RULES:
+1. Ground the passage EXCLUSIVELY in the provided study's actual findings, claims, abstract, and methodology.
+2. NEVER invent statistics, percentages, sample sizes, dates, or conclusions not explicitly present in the study data.
+3. Respect the study's scope and limitations. Qualify claims appropriately when the study is preliminary or context-specific.
+4. Write in the "Science of Gifts" house voice: human, specific, civilized, conversational, and unhurried.
+5. NEVER use em dashes (—) and NEVER use Markdown syntax (no **, *, #, [link](url)). Output plain editorial prose sentences only.
+
+Return ONLY valid JSON:
+{
+  "proposedPassage": "1-2 sentences of clean editorial prose stating the research-backed point.",
+  "relevantFinding": "The specific finding from the study used in this passage.",
+  "supportingEvidence": "The exact evidence from the study record supporting this passage.",
+  "limitationsOrQualifications": "Any limitations, sample constraints, or qualifications the writer should keep in mind.",
+  "explanation": "Why this passage fits the article and accurately reflects the study.",
+  "targetSectionHeading": "Suggested section heading in the article",
+  "anchorPassageContext": "Optional existing sentence in the article after which this passage fits best"
+}`;
+
+      const userPrompt = `ARTICLE TITLE: "${projectTitle}"
+TARGET SECTION: "${targetSectionHeading}"
+ANCHOR CONTEXT: "${anchorPassageContext}"
+WRITER GUIDANCE: "${editorialGuidance}"
+
+ARTICLE EXCERPT:
+${String(documentContent).slice(0, 3500)}
+
+STUDY DATA (AUTHORITATIVE SOURCE — DO NOT INVENT BEYOND THIS):
+${JSON.stringify(study, null, 2)}`;
+
+      const response = await ai.models.generateContent({
+        model: modelToUse,
+        contents: userPrompt,
+        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.2 },
+      });
+
+      const text = response.text?.trim() || '{}';
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed.proposedPassage !== 'string' || !parsed.proposedPassage.trim()) {
+        throw new Error('Model did not return a valid research-backed passage');
+      }
+
+      return jsonResponse({
+        ok: true,
+        proposedPassage: parsed.proposedPassage.replace(/—/g, ', ').trim(),
+        relevantFinding: parsed.relevantFinding || '',
+        supportingEvidence: parsed.supportingEvidence || '',
+        limitationsOrQualifications: parsed.limitationsOrQualifications || '',
+        explanation: parsed.explanation || '',
+        targetSectionHeading: parsed.targetSectionHeading || targetSectionHeading,
+        anchorPassageContext: parsed.anchorPassageContext || anchorPassageContext,
         modelUsed: modelToUse,
       });
     }

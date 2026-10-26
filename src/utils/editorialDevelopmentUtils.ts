@@ -1,0 +1,342 @@
+/**
+ * Science of Gifts - Editorial Development Workflow Utilities
+ * Pure, deterministic state-management and validation helpers for:
+ * 1. Idea -> 2. Five Angles -> 3. Editorial Direction -> 4. Editorial Brief
+ */
+
+import {
+  EditorialAngle,
+  EditorialDirection,
+  EditorialDevelopment,
+  StructuredEditorialBrief,
+  BriefReference,
+  AngleRole,
+} from '../types/project';
+import { EditorialIdea } from '../types/ideaGenerator';
+
+export type WorkflowStep = 'idea' | 'angles' | 'direction' | 'brief';
+
+/**
+ * Determines the initial workflow step when opening or restoring a project's
+ * Editorial Development workflow.
+ *
+ * IMPORTANT:
+ * - Only called on initial mount, project switch (`project.id` change), or drawer open.
+ * - Never called in response to ordinary `project.editorialDevelopment` edits while the
+ *   user is actively working inside the workflow.
+ * - Having assigned angle roles (`primary`, `secondary`, `brief_mention`, `do_not_use`)
+ *   while `status === 'angles_generated'` keeps the initial step on `'angles'` until the
+ *   user explicitly advances to `'direction'` (`status === 'direction_set'`) or creates a brief.
+ */
+export function determineInitialDevelopmentStep(dev?: EditorialDevelopment): WorkflowStep {
+  if (!dev) return 'idea';
+  if (dev.brief) return 'brief';
+  if (dev.status === 'direction_set') return 'direction';
+  if (dev.angles && dev.angles.length > 0) return 'angles';
+  return 'idea';
+}
+
+/**
+ * Applies an editorial role assignment (`primary`, `secondary`, `brief_mention`,
+ * `do_not_use`, or `unassigned`) to a specific angle without advancing the workflow step.
+ *
+ * Rules:
+ * - At most 1 Primary angle (`primary`): assigning Primary to a new angle demotes any
+ *   previously selected Primary angle to `unassigned`.
+ * - At most 1 Secondary angle (`secondary`): assigning Secondary to a new angle demotes any
+ *   previously selected Secondary angle to `unassigned`.
+ * - Multiple angles can be `brief_mention` or `do_not_use`.
+ * - Clicking an angle's already-active role toggles it back to `unassigned` (Clear).
+ * - Does NOT set `status` to `'direction_set'` (preserves `'angles_generated'` or `'brief_ready'`).
+ */
+export function applyAngleRoleAssignment(
+  dev: EditorialDevelopment,
+  angleId: string,
+  role: AngleRole,
+  currentEditorsDirection?: string
+): {
+  angles: EditorialAngle[];
+  direction: EditorialDirection;
+  status: EditorialDevelopment['status'];
+} {
+  const currentAngles = dev.angles || [];
+  let updatedPrimary = dev.direction?.primaryAngleId;
+  let updatedSecondary = dev.direction?.secondaryAngleId;
+  const briefMentions = new Set(dev.direction?.briefMentionAngleIds || []);
+  const doNotUse = new Set(dev.direction?.doNotUseAngleIds || []);
+
+  const updatedAngles = currentAngles.map((angle) => {
+    if (angle.id === angleId) {
+      const newRole: AngleRole = angle.role === role ? 'unassigned' : role;
+
+      // Remove from all direction role slots first
+      if (updatedPrimary === angleId) updatedPrimary = undefined;
+      if (updatedSecondary === angleId) updatedSecondary = undefined;
+      briefMentions.delete(angleId);
+      doNotUse.delete(angleId);
+
+      // Assign to the new role slot
+      if (newRole === 'primary') updatedPrimary = angleId;
+      if (newRole === 'secondary') updatedSecondary = angleId;
+      if (newRole === 'brief_mention') briefMentions.add(angleId);
+      if (newRole === 'do_not_use') doNotUse.add(angleId);
+
+      return { ...angle, role: newRole };
+    }
+
+    // If assigning a new Primary angle, demote any previous Primary angle
+    if (role === 'primary' && angle.role === 'primary' && angle.id !== angleId) {
+      return { ...angle, role: 'unassigned' as AngleRole };
+    }
+
+    // If assigning a new Secondary angle, demote any previous Secondary angle
+    if (role === 'secondary' && angle.role === 'secondary' && angle.id !== angleId) {
+      return { ...angle, role: 'unassigned' as AngleRole };
+    }
+
+    return angle;
+  });
+
+  // Ensure primaryAngleId and secondaryAngleId stay strictly consistent with angle roles
+  const actualPrimary = updatedAngles.find((a) => a.role === 'primary');
+  const actualSecondary = updatedAngles.find((a) => a.role === 'secondary');
+  updatedPrimary = actualPrimary ? actualPrimary.id : undefined;
+  updatedSecondary = actualSecondary ? actualSecondary.id : undefined;
+
+  const updatedDirection: EditorialDirection = {
+    ...dev.direction,
+    primaryAngleId: updatedPrimary,
+    secondaryAngleId: updatedSecondary,
+    briefMentionAngleIds: updatedAngles
+      .filter((a) => a.role === 'brief_mention')
+      .map((a) => a.id),
+    doNotUseAngleIds: updatedAngles
+      .filter((a) => a.role === 'do_not_use')
+      .map((a) => a.id),
+    editorsDirection:
+      currentEditorsDirection !== undefined
+        ? currentEditorsDirection
+        : dev.direction?.editorsDirection || '',
+  };
+
+  const nextStatus: EditorialDevelopment['status'] =
+    dev.status === 'brief_ready' && dev.brief ? 'brief_ready' : 'angles_generated';
+
+  return {
+    angles: updatedAngles,
+    direction: updatedDirection,
+    status: nextStatus,
+  };
+}
+
+/**
+ * Validates that required inputs exist before calling `/api/gemini/create-editorial-brief`.
+ * Requires a non-empty working title/topic and either a selected Primary Angle or
+ * non-empty custom Editorial Direction.
+ */
+export function validateBriefGenerationInputs(params: {
+  projectTitle?: string;
+  idea?: Partial<EditorialIdea> | null;
+  angles?: EditorialAngle[] | null;
+  direction?: Partial<EditorialDirection> | null;
+}): { valid: boolean; error?: string } {
+  const title = (params.idea?.title || params.projectTitle || '').trim();
+  if (!title) {
+    return {
+      valid: false,
+      error: 'Please provide an Article Working Title in Step 1 before creating the Editorial Brief.',
+    };
+  }
+
+  const safeAngles = Array.isArray(params.angles) ? params.angles : [];
+  const hasPrimaryAngle = safeAngles.some(
+    (a) => a && (a.role === 'primary' || (params.direction?.primaryAngleId && a.id === params.direction.primaryAngleId))
+  );
+  const hasManualDirection = Boolean((params.direction?.editorsDirection || '').trim());
+
+  if (!hasPrimaryAngle && !hasManualDirection) {
+    return {
+      valid: false,
+      error:
+        'Select a Primary Angle in Step 2 or enter custom Editorial Direction in Step 3 before creating the brief.',
+    };
+  }
+
+  return { valid: true };
+}
+
+function toCleanStringArray(val: any): string[] {
+  if (Array.isArray(val)) {
+    return val
+      .map((item) =>
+        typeof item === 'string'
+          ? item.trim()
+          : String(item?.text || item?.title || item?.claimText || item || '').trim()
+      )
+      .filter(Boolean);
+  }
+  if (typeof val === 'string' && val.trim()) {
+    return [val.trim()];
+  }
+  return [];
+}
+
+/**
+ * Strictly validates and normalizes a raw Editorial Brief response from the AI endpoint.
+ *
+ * CRITICAL:
+ * - Never fabricates editorial content when the AI response is empty, non-JSON, or missing
+ *   essential brief fields (`workingTitle`, `centralArgument`, `primaryAngle`).
+ * - Prevents empty or malformed responses from overwriting an existing valid brief.
+ */
+export function validateAndNormalizeEditorialBrief(
+  rawInput: any,
+  context: {
+    projectTitle?: string;
+    idea?: Partial<EditorialIdea> | null;
+    direction?: Partial<EditorialDirection> | null;
+    angles?: EditorialAngle[] | null;
+    attachedStudies?: any[] | null;
+  } = {}
+): { valid: boolean; brief?: StructuredEditorialBrief; error?: string } {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
+    return {
+      valid: false,
+      error: 'Model did not return a structured editorial brief object.',
+    };
+  }
+
+  const raw =
+    rawInput.brief && typeof rawInput.brief === 'object' && !Array.isArray(rawInput.brief)
+      ? rawInput.brief
+      : rawInput.editorialBrief &&
+        typeof rawInput.editorialBrief === 'object' &&
+        !Array.isArray(rawInput.editorialBrief)
+      ? rawInput.editorialBrief
+      : rawInput;
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      valid: false,
+      error: 'Model did not return a valid structured editorial brief.',
+    };
+  }
+
+  const workingTitle = String(raw.workingTitle || raw.title || '')
+    .replace(/[*_#`]/g, '')
+    .trim();
+  const centralArgument = String(
+    raw.centralArgument || raw.coreArgument || raw.thesis || ''
+  ).trim();
+  const primaryAngle = String(raw.primaryAngle || '').trim();
+
+  if (!workingTitle || !centralArgument || !primaryAngle) {
+    const missing: string[] = [];
+    if (!workingTitle) missing.push('workingTitle');
+    if (!centralArgument) missing.push('centralArgument');
+    if (!primaryAngle) missing.push('primaryAngle');
+    return {
+      valid: false,
+      error: `Model response is incomplete: missing required brief fields (${missing.join(', ')}).`,
+    };
+  }
+
+  const keyQuestions = toCleanStringArray(raw.keyQuestions);
+  const editorialDirection = String(
+    raw.editorialDirection || context.direction?.editorsDirection || ''
+  ).trim();
+  const suggestedTakeaway = String(raw.suggestedTakeaway || '').trim();
+
+  if (keyQuestions.length === 0 || !editorialDirection || !suggestedTakeaway) {
+    const missingDetails: string[] = [];
+    if (keyQuestions.length === 0) missingDetails.push('keyQuestions');
+    if (!editorialDirection) missingDetails.push('editorialDirection');
+    if (!suggestedTakeaway) missingDetails.push('suggestedTakeaway');
+    return {
+      valid: false,
+      error: `Model response is incomplete: missing required brief sections (${missingDetails.join(', ')}).`,
+    };
+  }
+
+  const safeStudies = Array.isArray(context.attachedStudies)
+    ? context.attachedStudies.filter(Boolean)
+    : [];
+  const rawRefs = Array.isArray(raw.references) ? raw.references : [];
+
+  const normalizedRefs: BriefReference[] =
+    safeStudies.length > 0
+      ? safeStudies.map((s: any) => {
+          const matchedRef = rawRefs.find(
+            (r: any) =>
+              r?.studyId === s.id ||
+              (r?.title &&
+                s.title &&
+                String(r.title).toLowerCase() === String(s.title).toLowerCase())
+          );
+          const doiRaw = s.doi || s.sourceUrl || s.doiOrUrl || matchedRef?.doiOrUrl || '';
+          return {
+            studyId: s.id,
+            title: String(s.title || matchedRef?.title || 'Attached Study'),
+            authors: Array.isArray(s.authors)
+              ? s.authors.map(String)
+              : toCleanStringArray(matchedRef?.authors),
+            publication: String(
+              s.publication || s.sourceOrPublisher || matchedRef?.publication || ''
+            ),
+            publicationYear: String(
+              s.publicationYear || s.publicationDate || matchedRef?.publicationYear || ''
+            ),
+            doiOrUrl: String(doiRaw),
+            isVerifiedMatch: Boolean(doiRaw || s.extractedText || s.abstract),
+            verificationNote: String(
+              matchedRef?.verificationNote ||
+                'Attached project study from the Research Library.'
+            ),
+          };
+        })
+      : rawRefs
+          .filter((r: any) => r && typeof r === 'object' && r.title)
+          .map((r: any) => ({
+            studyId: r.studyId ? String(r.studyId) : undefined,
+            title: String(r.title).trim(),
+            authors: toCleanStringArray(r.authors),
+            publication: r.publication ? String(r.publication).trim() : undefined,
+            publicationYear: r.publicationYear ? String(r.publicationYear).trim() : undefined,
+            doiOrUrl: r.doiOrUrl ? String(r.doiOrUrl).trim() : undefined,
+            isVerifiedMatch: Boolean(r.isVerifiedMatch),
+            verificationNote: r.verificationNote
+              ? String(r.verificationNote).trim()
+              : 'Requires verification in Research Library.',
+          }));
+
+  const now = new Date().toISOString();
+
+  const normalizedBrief: StructuredEditorialBrief = {
+    workingTitle,
+    topic: String(raw.topic || context.idea?.title || context.projectTitle || workingTitle).trim(),
+    audience: String(raw.audience || 'Discerning readers and thoughtful gifters').trim(),
+    searchIntent: String(
+      raw.searchIntent || context.idea?.searchIntent || 'Editorial insight & advice'
+    ).trim(),
+    primaryAngle,
+    secondaryFocus: String(raw.secondaryFocus || raw.secondaryAngle || '').trim(),
+    briefMentions: toCleanStringArray(raw.briefMentions),
+    thingsToAvoid: toCleanStringArray(raw.thingsToAvoid),
+    centralArgument,
+    keyQuestions,
+    editorialDirection,
+    suggestedTakeaway,
+    factualContext: toCleanStringArray(raw.factualContext),
+    editorialInterpretation: toCleanStringArray(raw.editorialInterpretation),
+    internalLinkOpportunities: toCleanStringArray(raw.internalLinkOpportunities),
+    references: normalizedRefs,
+    styleConsiderations: String(raw.styleConsiderations || '').trim() || undefined,
+    generatedAt: typeof raw.generatedAt === 'string' && raw.generatedAt ? raw.generatedAt : now,
+    updatedAt: typeof raw.updatedAt === 'string' && raw.updatedAt ? raw.updatedAt : now,
+  };
+
+  return {
+    valid: true,
+    brief: normalizedBrief,
+  };
+}

@@ -103,6 +103,16 @@ export const EditorialIntelligenceDrawer: React.FC<EditorialIntelligenceDrawerPr
   const [selectedSectionId, setSelectedSectionId] = useState<string>(
     project.outline && project.outline.length > 0 ? project.outline[0].id : ''
   );
+
+  useEffect(() => {
+    if (project.outline && project.outline.length > 0) {
+      setSelectedSectionId((prev) =>
+        project.outline.some((s) => s.id === prev) ? prev : project.outline[0].id
+      );
+    } else {
+      setSelectedSectionId('');
+    }
+  }, [project.outline]);
   const [isReviewLoading, setIsReviewLoading] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<'all' | 'critical_important' | 'rules' | 'ai_repetition' | 'suggestions'>('all');
   const [reviewError, setReviewError] = useState<string | null>(null);

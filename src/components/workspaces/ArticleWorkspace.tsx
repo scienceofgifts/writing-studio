@@ -972,27 +972,6 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
 
       {/* Main Dominant Writing Canvas */}
       <div className="flex-1 overflow-y-auto p-2 sm:p-4 md:p-8 flex flex-col">
-        {project.editorialDevelopment?.originalIdea && !project.editorialDevelopment?.brief && (
-          <div className="mb-4 mx-auto max-w-3xl w-full bg-[#f6f3eb] border border-[#ded7ca] rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-in fade-in duration-100 shadow-2xs">
-            <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
-              <Compass className="w-4 h-4 text-amber-900 shrink-0 mt-0.5 sm:mt-0" />
-              <div className="min-w-0 flex-1">
-                <span className="font-bold text-[#1e232a] mr-1.5">Editorial Development:</span>
-                <span className="text-[#5c5447] block sm:inline truncate">
-                  Originated from idea &ldquo;{project.editorialDevelopment.originalIdea.title}&rdquo;. Ready to shape 5 editorial angles and synthesize a structured brief.
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onTogglePanel?.('develop')}
-              className="w-full sm:w-auto px-3.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold bg-[#1e232a] text-white hover:bg-[#2d3744] transition-colors shrink-0 cursor-pointer shadow-2xs text-center flex items-center justify-center"
-            >
-              Develop Article
-            </button>
-          </div>
-        )}
-
         <Editor
           projectId={project.id}
           project={project}

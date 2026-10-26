@@ -1268,7 +1268,10 @@ export const storage = {
     rules: GlobalInstruction[],
     options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
   ): void {
-    const previous = options?.changedDetails ? [] : this.getRawGlobalInstructionsIncludingDeleted();
+    const previous =
+      options?.silent || options?.changedDetails
+        ? []
+        : this.getRawGlobalInstructionsIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_GLOBAL_RULES, JSON.stringify(rules));
     } catch (e) {
@@ -1481,7 +1484,10 @@ export const storage = {
     profiles: StyleProfile[],
     options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
   ): void {
-    const previous = options?.changedDetails ? [] : this.getRawStyleProfilesIncludingDeleted();
+    const previous =
+      options?.silent || options?.changedDetails
+        ? []
+        : this.getRawStyleProfilesIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_STYLE_PROFILES, JSON.stringify(profiles));
     } catch (e) {
@@ -1667,7 +1673,10 @@ export const storage = {
     links: InternalLink[],
     options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
   ): void {
-    const previous = options?.changedDetails ? [] : this.getRawInternalLinksIncludingDeleted();
+    const previous =
+      options?.silent || options?.changedDetails
+        ? []
+        : this.getRawInternalLinksIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_INTERNAL_LINKS, JSON.stringify(links));
     } catch (e) {
@@ -1850,7 +1859,10 @@ export const storage = {
     ideas: SavedEditorialIdea[],
     options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
   ): void {
-    const previous = options?.changedDetails ? [] : this.getRawSavedIdeasIncludingDeleted();
+    const previous =
+      options?.silent || options?.changedDetails
+        ? []
+        : this.getRawSavedIdeasIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_SAVED_IDEAS, JSON.stringify(ideas));
     } catch (e) {
@@ -2045,7 +2057,10 @@ export const storage = {
     studies: ResearchStudy[],
     options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
   ): void {
-    const previous = options?.changedDetails ? [] : this.getRawResearchStudiesIncludingDeleted();
+    const previous =
+      options?.silent || options?.changedDetails
+        ? []
+        : this.getRawResearchStudiesIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_STUDIES, JSON.stringify(studies));
     } catch (e) {
@@ -2189,7 +2204,10 @@ export const storage = {
     claims: ResearchClaim[],
     options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }
   ): void {
-    const previous = options?.changedDetails ? [] : this.getRawResearchClaimsIncludingDeleted();
+    const previous =
+      options?.silent || options?.changedDetails
+        ? []
+        : this.getRawResearchClaimsIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_CLAIMS, JSON.stringify(claims));
     } catch (e) {
@@ -2330,7 +2348,10 @@ export const storage = {
   },
 
   saveResearchFiles(files: ResearchFile[], options?: { silent?: boolean; changedDetails?: StorageChangeDetail[] }): void {
-    const previous = options?.changedDetails ? [] : this.getRawResearchFilesIncludingDeleted();
+    const previous =
+      options?.silent || options?.changedDetails
+        ? []
+        : this.getRawResearchFilesIncludingDeleted();
     try {
       localStorage.setItem(STORAGE_KEY_RESEARCH_FILES, JSON.stringify(files));
     } catch (e) {

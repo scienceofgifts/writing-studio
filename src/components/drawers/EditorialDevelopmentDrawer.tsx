@@ -4,7 +4,7 @@
  * 1. IDEA -> 2. GENERATE 5 ANGLES -> 3. EDITORIAL DIRECTION -> 4. EDITORIAL BRIEF -> (OUTLINE in future phase)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   WritingProject,
   EditorialAngle,
@@ -18,6 +18,13 @@ import { geminiService } from '../../services/geminiClient';
 import { storage } from '../../services/storage';
 import { toast } from '../../services/toastService';
 import { createVersionSnapshot } from '../../services/versionHistoryService';
+import {
+  WorkflowStep,
+  determineInitialDevelopmentStep,
+  applyAngleRoleAssignment,
+  validateBriefGenerationInputs,
+  validateAndNormalizeEditorialBrief,
+} from '../../utils/editorialDevelopmentUtils';
 import {
   Compass,
   X,
@@ -53,8 +60,6 @@ interface EditorialDevelopmentDrawerProps {
   onOpenOutline?: () => void;
 }
 
-type WorkflowStep = 'idea' | 'angles' | 'direction' | 'brief';
-
 export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProps> = ({
   isOpen,
   onClose,
@@ -80,15 +85,12 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
     status: 'idea',
   };
 
-  // Determine active step based on state
-  const determineInitialStep = (): WorkflowStep => {
-    if (currentDev.brief) return 'brief';
-    if (currentDev.direction?.primaryAngleId || (currentDev.angles && currentDev.angles.some(a => a.role !== 'unassigned'))) return 'direction';
-    if (currentDev.angles && currentDev.angles.length > 0) return 'angles';
-    return 'idea';
-  };
-
-  const [activeStep, setActiveStep] = useState<WorkflowStep>(determineInitialStep);
+  // Determine active step ONLY on mount, project switch, or drawer reopen — never on ordinary in-project edits
+  const [activeStep, setActiveStep] = useState<WorkflowStep>(() =>
+    determineInitialDevelopmentStep(currentDev)
+  );
+  const lastInitializedProjectIdRef = useRef<string>(project.id);
+  const wasOpenRef = useRef<boolean>(isOpen);
 
   // Idea state
   const [ideaTitle, setIdeaTitle] = useState(currentDev.originalIdea?.title || project.title || '');
@@ -98,15 +100,73 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
 
   // Angles & Direction state
   const [isGeneratingAngles, setIsGeneratingAngles] = useState(false);
+  const isGeneratingAnglesRef = useRef(false);
+  const [anglesError, setAnglesError] = useState<string | null>(null);
   const [proposedAngles, setProposedAngles] = useState<EditorialAngle[] | null>(null);
   const [editorsDirection, setEditorsDirection] = useState(currentDev.direction?.editorsDirection || '');
 
   // Brief state
   const [isCreatingBrief, setIsCreatingBrief] = useState(false);
+  const isCreatingBriefRef = useRef(false);
+  const [briefError, setBriefError] = useState<string | null>(null);
   const [proposedBrief, setProposedBrief] = useState<StructuredEditorialBrief | null>(null);
   const [isEditingBrief, setIsEditingBrief] = useState(false);
   const [editableBrief, setEditableBrief] = useState<StructuredEditorialBrief | null>(currentDev.brief || null);
   const [copiedBrief, setCopiedBrief] = useState(false);
+
+  // Restore step and sync local form state ONLY when switching projects or reopening the drawer
+  useEffect(() => {
+    const projectChanged = lastInitializedProjectIdRef.current !== project.id;
+    const justOpened = isOpen && !wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+
+    if (projectChanged || justOpened) {
+      lastInitializedProjectIdRef.current = project.id;
+      const dev = project.editorialDevelopment;
+      setActiveStep(determineInitialDevelopmentStep(dev));
+      setIdeaTitle(dev?.originalIdea?.title || project.title || '');
+      setIdeaAngle(
+        dev?.originalIdea?.angle ||
+          project.brief?.purpose ||
+          project.articleMeta?.standfirst ||
+          ''
+      );
+      setIdeaWhy(
+        dev?.originalIdea?.whyInteresting ||
+          project.brief?.keyPoints?.[0] ||
+          'Explores material craft and recipient psychology.'
+      );
+      setIdeaSearchIntent(
+        dev?.originalIdea?.searchIntent ||
+          project.articleMeta?.searchIntent ||
+          'Editorial insight & advice'
+      );
+      setEditorsDirection(
+        dev?.direction?.editorsDirection ?? project.projectInstructions ?? ''
+      );
+      setEditableBrief(dev?.brief || null);
+      setProposedAngles(null);
+      setProposedBrief(null);
+      setIsEditingBrief(false);
+      setBriefError(null);
+      setAnglesError(null);
+    }
+  }, [
+    project.id,
+    isOpen,
+    project.editorialDevelopment,
+    project.title,
+    project.brief,
+    project.articleMeta,
+    project.projectInstructions,
+  ]);
+
+  // Keep editableBrief synchronized if project.editorialDevelopment.brief changes externally while not actively editing
+  useEffect(() => {
+    if (!isEditingBrief) {
+      setEditableBrief(project.editorialDevelopment?.brief || null);
+    }
+  }, [project.editorialDevelopment?.brief, isEditingBrief]);
 
   if (!isOpen) return null;
 
@@ -143,7 +203,10 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
   // 1. GENERATE 5 ANGLES
   // -------------------------------------------------------------------------
   const handleGenerateAngles = async () => {
+    if (isGeneratingAngles || isGeneratingAnglesRef.current) return;
+    isGeneratingAnglesRef.current = true;
     setIsGeneratingAngles(true);
+    setAnglesError(null);
     try {
       const ideaPayload: EditorialIdea = {
         id: currentDev.originalIdea?.id || `idea-${Date.now()}`,
@@ -162,6 +225,7 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
         // If angles already exist, stage them for review to prevent silent overwriting
         if (currentDev.angles && currentDev.angles.length > 0) {
           setProposedAngles(res.angles);
+          setActiveStep('angles');
           toast.info('New Angles Proposed', 'Review the 5 newly formulated angles below.');
         } else {
           // First generation: accept directly and advance to Angles stage
@@ -174,12 +238,16 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
           toast.success('5 Editorial Angles Generated', 'Assign editorial roles to shape the article direction.');
         }
       } else {
-        toast.error('Generation Failed', res.error || 'Could not generate angles.');
+        const errMsg = res.error || 'Could not generate angles.';
+        setAnglesError(errMsg);
+        toast.error('Generation Failed', errMsg);
       }
     } catch (err: any) {
       console.error('Error generating angles:', err);
-      toast.error('Error', 'Failed to generate editorial angles.');
+      const errMsg = err?.message || 'Failed to generate editorial angles.';
+      setAnglesError(errMsg);
     } finally {
+      isGeneratingAnglesRef.current = false;
       setIsGeneratingAngles(false);
     }
   };
@@ -191,18 +259,7 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
       label: 'Regenerate Editorial Angles',
     });
 
-    saveDevelopment({
-      angles: proposedAngles,
-      direction: {
-        ...currentDev.direction,
-        primaryAngleId: undefined,
-        secondaryAngleId: undefined,
-        briefMentionAngleIds: [],
-        doNotUseAngleIds: [],
-      },
-      status: 'angles_generated',
-    });
-
+    const nowIso = new Date().toISOString();
     onChange({
       ...project,
       versionHistory: historySnapshot,
@@ -217,7 +274,9 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
           doNotUseAngleIds: [],
         },
         status: 'angles_generated',
+        lastGeneratedAt: nowIso,
       },
+      updatedAt: nowIso,
     });
 
     setProposedAngles(null);
@@ -226,62 +285,24 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
   };
 
   // -------------------------------------------------------------------------
-  // 2. ASSIGN ANGLE EDITORIAL ROLES
+  // 2. ASSIGN ANGLE EDITORIAL ROLES (Never advances activeStep)
   // -------------------------------------------------------------------------
   const handleAssignRole = (angleId: string, role: AngleRole) => {
-    const currentAngles = currentDev.angles || [];
-    let updatedPrimary = currentDev.direction?.primaryAngleId;
-    let updatedSecondary = currentDev.direction?.secondaryAngleId;
-    let briefMentions = new Set(currentDev.direction?.briefMentionAngleIds || []);
-    let doNotUse = new Set(currentDev.direction?.doNotUseAngleIds || []);
-
-    const updatedAngles = currentAngles.map((angle) => {
-      if (angle.id === angleId) {
-        // If clicking the current role again, toggle to unassigned
-        const newRole = angle.role === role ? 'unassigned' : role;
-
-        // Clean up from lists
-        if (updatedPrimary === angleId) updatedPrimary = undefined;
-        if (updatedSecondary === angleId) updatedSecondary = undefined;
-        briefMentions.delete(angleId);
-        doNotUse.delete(angleId);
-
-        // Assign to new role
-        if (newRole === 'primary') updatedPrimary = angleId;
-        if (newRole === 'secondary') updatedSecondary = angleId;
-        if (newRole === 'brief_mention') briefMentions.add(angleId);
-        if (newRole === 'do_not_use') doNotUse.add(angleId);
-
-        return { ...angle, role: newRole };
-      }
-
-      // If user sets a new primary, demote the old primary
-      if (role === 'primary' && angle.role === 'primary' && angle.id !== angleId) {
-        return { ...angle, role: 'unassigned' as AngleRole };
-      }
-
-      // If user sets a new secondary, demote the old secondary
-      if (role === 'secondary' && angle.role === 'secondary' && angle.id !== angleId) {
-        return { ...angle, role: 'unassigned' as AngleRole };
-      }
-
-      return angle;
-    });
-
-    const updatedDirection: EditorialDirection = {
-      ...currentDev.direction,
-      primaryAngleId: updatedPrimary,
-      secondaryAngleId: updatedSecondary,
-      briefMentionAngleIds: Array.from(briefMentions),
-      doNotUseAngleIds: Array.from(doNotUse),
-      editorsDirection,
-    };
-
+    const result = applyAngleRoleAssignment(currentDev, angleId, role, editorsDirection);
     saveDevelopment({
-      angles: updatedAngles,
-      direction: updatedDirection,
-      status: updatedPrimary ? 'direction_set' : 'angles_generated',
+      angles: result.angles,
+      direction: result.direction,
+      status: result.status,
     });
+  };
+
+  // Explicit step transition from Five Angles -> Editorial Direction
+  const handleProceedToDirection = () => {
+    setBriefError(null);
+    if (currentDev.status !== 'brief_ready' && currentDev.status !== 'direction_set') {
+      saveDevelopment({ status: 'direction_set' }, 'direction_set');
+    }
+    setActiveStep('direction');
   };
 
   // -------------------------------------------------------------------------
@@ -289,25 +310,47 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
   // -------------------------------------------------------------------------
   const handleUpdateEditorsDirection = (newText: string) => {
     setEditorsDirection(newText);
+    if (briefError) setBriefError(null);
     const updatedDirection: EditorialDirection = {
       ...currentDev.direction,
       editorsDirection: newText,
     };
-    saveDevelopment({ direction: updatedDirection });
+    const nextStatus =
+      currentDev.status === 'brief_ready' ? 'brief_ready' : 'direction_set';
+    saveDevelopment({ direction: updatedDirection, status: nextStatus }, nextStatus);
   };
 
   // -------------------------------------------------------------------------
   // 4. CREATE EDITORIAL BRIEF
   // -------------------------------------------------------------------------
   const handleCreateBrief = async () => {
-    setIsCreatingBrief(true);
-    try {
-      const activeAngles = currentDev.angles || [];
-      const activeDirection = {
-        ...currentDev.direction,
-        editorsDirection,
-      };
+    if (isCreatingBrief || isCreatingBriefRef.current) return;
 
+    const activeAngles = currentDev.angles || [];
+    const activeDirection: EditorialDirection = {
+      ...currentDev.direction,
+      editorsDirection,
+    };
+
+    const inputCheck = validateBriefGenerationInputs({
+      projectTitle: project.title,
+      idea: currentDev.originalIdea,
+      angles: activeAngles,
+      direction: activeDirection,
+    });
+
+    if (!inputCheck.valid) {
+      const msg = inputCheck.error || 'Missing required editorial direction inputs.';
+      setBriefError(msg);
+      toast.error('Editorial Direction Incomplete', msg);
+      return;
+    }
+
+    isCreatingBriefRef.current = true;
+    setIsCreatingBrief(true);
+    setBriefError(null);
+
+    try {
       const res = await geminiService.createEditorialBrief(
         project,
         activeDirection,
@@ -319,23 +362,43 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
       );
 
       if (res.ok && res.brief) {
-        // If an existing brief exists, show for review before replacing
+        const validation = validateAndNormalizeEditorialBrief(res.brief, {
+          projectTitle: project.title,
+          idea: currentDev.originalIdea,
+          direction: activeDirection,
+          angles: activeAngles,
+          attachedStudies,
+        });
+
+        if (!validation.valid || !validation.brief) {
+          const msg = validation.error || 'Model did not return a valid structured editorial brief.';
+          setBriefError(msg);
+          toast.error('Synthesis Failed', msg);
+          return;
+        }
+
+        // If an existing brief exists, stage for review on the Brief step before replacing
         if (currentDev.brief) {
-          setProposedBrief(res.brief);
+          setProposedBrief(validation.brief);
+          setActiveStep('brief');
           toast.info('New Brief Generated', 'Inspect the synthesized brief below.');
         } else {
-          // Direct apply
-          applyBriefToProject(res.brief);
+          // Direct apply and transition to Brief step
+          applyBriefToProject(validation.brief);
           setActiveStep('brief');
           toast.success('Editorial Brief Synthesized', 'Structured brief ready for editorial development.');
         }
       } else {
-        toast.error('Synthesis Failed', res.error || 'Could not synthesize brief.');
+        const msg = res.error || 'Could not synthesize brief.';
+        setBriefError(msg);
+        toast.error('Synthesis Failed', msg);
       }
     } catch (err: any) {
       console.error('Error creating editorial brief:', err);
-      toast.error('Error', 'Failed to create editorial brief.');
+      const msg = err?.message || 'Failed to create editorial brief.';
+      setBriefError(msg);
     } finally {
+      isCreatingBriefRef.current = false;
       setIsCreatingBrief(false);
     }
   };
@@ -927,7 +990,7 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                 <div className="pt-3 flex justify-end">
                   <button
                     type="button"
-                    onClick={() => setActiveStep('direction')}
+                    onClick={handleProceedToDirection}
                     className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-[#1e232a] text-white hover:bg-[#2d3744] transition-colors inline-flex items-center gap-2 shadow-2xs cursor-pointer"
                   >
                     <span>Proceed to Editorial Direction</span>
@@ -1134,6 +1197,27 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
               </div>
             </div>
 
+            {/* Error / Validation Banner with Retry */}
+            {briefError && (
+              <div className="p-3.5 rounded-xl border border-rose-300 bg-rose-50/90 flex items-start justify-between gap-3 text-xs text-rose-950">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <AlertCircle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <span className="font-bold block">Brief Synthesis Issue</span>
+                    <p className="text-rose-900 mt-0.5 leading-relaxed">{briefError}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCreateBrief}
+                  disabled={isCreatingBrief}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-rose-300 text-rose-900 hover:bg-rose-100 transition-colors shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
             {/* Create Brief Action */}
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
               <button
@@ -1170,6 +1254,27 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
         {/* ================================================================= */}
         {activeStep === 'brief' && (
           <div className="space-y-5 animate-in fade-in duration-100">
+            {/* Error Banner on Brief Step (e.g. if Regenerate fails) */}
+            {briefError && (
+              <div className="p-3.5 rounded-xl border border-rose-300 bg-rose-50/90 flex items-start justify-between gap-3 text-xs text-rose-950">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <AlertCircle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <span className="font-bold block">Brief Synthesis Issue</span>
+                    <p className="text-rose-900 mt-0.5 leading-relaxed">{briefError}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCreateBrief}
+                  disabled={isCreatingBrief}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-rose-300 text-rose-900 hover:bg-rose-100 transition-colors shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
             {/* Review Proposed Brief Banner (If Regenerating) */}
             {proposedBrief && (
               <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl space-y-3 animate-in zoom-in-95 duration-100">
@@ -1223,7 +1328,7 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
               </div>
             ) : (
               (() => {
-                const brief = editableBrief || currentDev.brief || proposedBrief;
+                const brief = proposedBrief || editableBrief || currentDev.brief;
                 if (!brief) return null;
 
                 return (
@@ -1233,7 +1338,7 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                       <div className="flex items-center gap-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-700" />
                         <span className="text-xs font-bold uppercase tracking-wider text-[#1e232a]">
-                          Editorial Brief Ready
+                          {proposedBrief ? 'Inspecting Proposed Brief' : 'Editorial Brief Ready'}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1257,7 +1362,14 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                         </button>
                         <button
                           type="button"
-                          onClick={() => setIsEditingBrief(!isEditingBrief)}
+                          onClick={() => {
+                            if (isEditingBrief && editableBrief) {
+                              applyBriefToProject(editableBrief);
+                            } else if (!isEditingBrief) {
+                              setEditableBrief(brief);
+                            }
+                            setIsEditingBrief(!isEditingBrief);
+                          }}
                           className="px-2.5 py-1 text-xs font-medium rounded-lg border border-[#dcd6ca] bg-white hover:bg-[#ede8dc] text-[#3a342c] transition-colors inline-flex items-center gap-1 shadow-2xs cursor-pointer"
                         >
                           <Edit3 className="w-3.5 h-3.5 text-[#5c5447]" />
@@ -1267,10 +1379,14 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                           type="button"
                           onClick={handleCreateBrief}
                           disabled={isCreatingBrief}
-                          className="px-2.5 py-1 text-xs font-medium rounded-lg border border-[#dcd6ca] bg-white hover:bg-[#ede8dc] text-[#3a342c] transition-colors inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                          className="px-2.5 py-1 text-xs font-medium rounded-lg border border-[#dcd6ca] bg-white hover:bg-[#ede8dc] text-[#3a342c] transition-colors inline-flex items-center gap-1 shadow-2xs cursor-pointer disabled:opacity-50"
                           title="Regenerate brief with current direction"
                         >
-                          <RotateCw className="w-3.5 h-3.5 text-amber-800" />
+                          {isCreatingBrief ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-800" />
+                          ) : (
+                            <RotateCw className="w-3.5 h-3.5 text-amber-800" />
+                          )}
                           <span>Regenerate</span>
                         </button>
                       </div>
@@ -1318,19 +1434,37 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                           <span className="text-[10px] font-bold uppercase tracking-wider text-[#1e232a] block mb-1">
                             Primary Editorial Angle
                           </span>
-                          <p className="text-xs font-semibold text-[#1e232a] leading-relaxed">
-                            {brief.primaryAngle}
-                          </p>
+                          {isEditingBrief ? (
+                            <textarea
+                              rows={2}
+                              value={brief.primaryAngle}
+                              onChange={(e) => setEditableBrief({ ...brief, primaryAngle: e.target.value })}
+                              className="w-full px-2.5 py-1.5 text-xs font-semibold text-[#1e232a] bg-white rounded border border-[#dcd6ca]"
+                            />
+                          ) : (
+                            <p className="text-xs font-semibold text-[#1e232a] leading-relaxed">
+                              {brief.primaryAngle}
+                            </p>
+                          )}
                         </div>
 
-                        {brief.secondaryFocus && (
+                        {(brief.secondaryFocus || isEditingBrief) && (
                           <div className="p-3.5 rounded-lg bg-amber-50/40 border border-amber-200">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block mb-1">
                               Secondary Supporting Focus
                             </span>
-                            <p className="text-xs text-[#4a443b] leading-relaxed">
-                              {brief.secondaryFocus}
-                            </p>
+                            {isEditingBrief ? (
+                              <textarea
+                                rows={2}
+                                value={brief.secondaryFocus || ''}
+                                onChange={(e) => setEditableBrief({ ...brief, secondaryFocus: e.target.value })}
+                                className="w-full px-2.5 py-1.5 text-xs text-[#4a443b] bg-white rounded border border-amber-300"
+                              />
+                            ) : (
+                              <p className="text-xs text-[#4a443b] leading-relaxed">
+                                {brief.secondaryFocus}
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1340,9 +1474,18 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                         <span className="text-[10px] font-bold uppercase tracking-wider text-[#736c61] block mb-1">
                           Central Argument
                         </span>
-                        <div className="p-3 rounded-lg bg-white border border-[#dcd6ca] text-xs text-[#2b251d] font-serif leading-relaxed">
-                          {brief.centralArgument}
-                        </div>
+                        {isEditingBrief ? (
+                          <textarea
+                            rows={3}
+                            value={brief.centralArgument}
+                            onChange={(e) => setEditableBrief({ ...brief, centralArgument: e.target.value })}
+                            className="w-full p-3 rounded-lg bg-white border border-[#dcd6ca] text-xs text-[#2b251d] font-serif leading-relaxed"
+                          />
+                        ) : (
+                          <div className="p-3 rounded-lg bg-white border border-[#dcd6ca] text-xs text-[#2b251d] font-serif leading-relaxed">
+                            {brief.centralArgument}
+                          </div>
+                        )}
                       </div>
 
                       {/* 4. Key Questions the Article Must Answer */}
@@ -1365,9 +1508,18 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                         <span className="text-[10px] font-bold uppercase tracking-wider text-amber-950 block mb-1">
                           Editorial Direction & Tone Guidance
                         </span>
-                        <p className="text-xs text-amber-950 leading-relaxed font-medium">
-                          {brief.editorialDirection}
-                        </p>
+                        {isEditingBrief ? (
+                          <textarea
+                            rows={3}
+                            value={brief.editorialDirection}
+                            onChange={(e) => setEditableBrief({ ...brief, editorialDirection: e.target.value })}
+                            className="w-full px-2.5 py-1.5 text-xs text-amber-950 bg-white rounded border border-amber-300 leading-relaxed font-medium"
+                          />
+                        ) : (
+                          <p className="text-xs text-amber-950 leading-relaxed font-medium">
+                            {brief.editorialDirection}
+                          </p>
+                        )}
                       </div>
 
                       {/* 6. Brief Mentions & Exclusions */}
