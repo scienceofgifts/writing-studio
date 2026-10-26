@@ -31,6 +31,7 @@ import { storage } from '../services/storage';
 interface DashboardProps {
   projects: WritingProject[];
   onOpenProject: (id: string) => void;
+  onOpenEditorialDevelopment?: (id: string) => void;
   onCreateProject: (type: ProjectType) => void;
   onDeleteProject: (id: string) => void;
   onDuplicateProject: (project: WritingProject) => void;
@@ -42,6 +43,7 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({
   projects,
   onOpenProject,
+  onOpenEditorialDevelopment,
   onCreateProject,
   onDeleteProject,
   onDuplicateProject,
@@ -450,7 +452,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      {proj.type === 'article' && onOpenEditorialDevelopment && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenEditorialDevelopment(proj.id)}
+                          className="px-2.5 py-1.5 min-h-[32px] text-[11px] font-semibold text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md inline-flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Open in Editorial Development Workspace (Idea → 5 Angles → Brief → Outline → Prompt)"
+                        >
+                          <Compass className="w-3.5 h-3.5 text-amber-800" />
+                          <span>Develop</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => onDuplicateProject(proj)}

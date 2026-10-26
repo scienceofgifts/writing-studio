@@ -58,6 +58,10 @@ interface EditorialDevelopmentDrawerProps {
   project: WritingProject;
   onChange: (updatedProject: WritingProject) => void;
   onOpenOutline?: () => void;
+  variant?: 'drawer' | 'workspace';
+  activeWorkspaceStep?: WorkflowStep;
+  onStepChange?: (step: WorkflowStep) => void;
+  onOpenIdeaGenerator?: () => void;
 }
 
 export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProps> = ({
@@ -66,6 +70,10 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
   project,
   onChange,
   onOpenOutline,
+  variant = 'drawer',
+  activeWorkspaceStep,
+  onStepChange,
+  onOpenIdeaGenerator,
 }) => {
   // Initialize workflow state from project or defaults
   const currentDev: EditorialDevelopment = project.editorialDevelopment || {
@@ -86,9 +94,14 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
   };
 
   // Determine active step ONLY on mount, project switch, or drawer reopen — never on ordinary in-project edits
-  const [activeStep, setActiveStep] = useState<WorkflowStep>(() =>
+  const [internalStep, setInternalStep] = useState<WorkflowStep>(() =>
     determineInitialDevelopmentStep(currentDev)
   );
+  const activeStep: WorkflowStep = activeWorkspaceStep || internalStep;
+  const setActiveStep = (nextStep: WorkflowStep) => {
+    setInternalStep(nextStep);
+    onStepChange?.(nextStep);
+  };
   const lastInitializedProjectIdRef = useRef<string>(project.id);
   const wasOpenRef = useRef<boolean>(isOpen);
 
@@ -123,7 +136,7 @@ export const EditorialDevelopmentDrawer: React.FC<EditorialDevelopmentDrawerProp
     if (projectChanged || justOpened) {
       lastInitializedProjectIdRef.current = project.id;
       const dev = project.editorialDevelopment;
-      setActiveStep(determineInitialDevelopmentStep(dev));
+      setInternalStep(determineInitialDevelopmentStep(dev));
       setIdeaTitle(dev?.originalIdea?.title || project.title || '');
       setIdeaAngle(
         dev?.originalIdea?.angle ||
@@ -539,147 +552,171 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
     }
   };
 
+  const isWorkspaceMode = variant === 'workspace';
+
   return (
-    <div className="max-md:fixed max-md:inset-0 max-md:z-50 max-md:w-full w-full md:w-[520px] lg:w-[580px] xl:w-[660px] md:max-w-[50vw] min-w-0 flex-shrink h-full bg-[#faf9f6] md:border-l border-[#dcd6ca] flex flex-col overflow-hidden animate-in slide-in-from-right-1 duration-150 z-30 shadow-xl">
-      {/* Drawer Masthead */}
-      <div className="p-4 sm:p-5 border-b border-[#e5dfd3] bg-[#f6f3eb] flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-[#1e232a] flex items-center justify-center text-amber-300 shadow-2xs shrink-0">
-            <Layers className="w-4 h-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-editorial text-lg font-bold text-[#1e232a] truncate">
-                Editorial Development
-              </h3>
-              <span className="px-1.5 py-0.5 rounded-xs text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
-                Phase 10.6
-              </span>
+    <div
+      className={
+        isWorkspaceMode
+          ? 'w-full max-w-5xl mx-auto min-w-0 flex-1 bg-white border border-[#e5dfd3] rounded-2xl shadow-xs flex flex-col overflow-hidden'
+          : 'max-md:fixed max-md:inset-0 max-md:z-50 max-md:w-full w-full md:w-[520px] lg:w-[580px] xl:w-[660px] md:max-w-[50vw] min-w-0 flex-shrink h-full bg-[#faf9f6] md:border-l border-[#dcd6ca] flex flex-col overflow-hidden animate-in slide-in-from-right-1 duration-150 z-30 shadow-xl'
+      }
+    >
+      {/* Drawer Masthead (Shown only in drawer mode; Workspace mode has its own unified header) */}
+      {!isWorkspaceMode && (
+        <div className="p-4 sm:p-5 border-b border-[#e5dfd3] bg-[#f6f3eb] flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-[#1e232a] flex items-center justify-center text-amber-300 shadow-2xs shrink-0">
+              <Layers className="w-4 h-4" />
             </div>
-            <p className="text-xs text-[#736c61] truncate">
-              Idea → 5 Angles → Editorial Direction → Editorial Brief
-            </p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="font-editorial text-lg font-bold text-[#1e232a] truncate">
+                  Editorial Development
+                </h3>
+                <span className="px-1.5 py-0.5 rounded-xs text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
+                  Phase 10.6
+                </span>
+              </div>
+              <p className="text-xs text-[#736c61] truncate">
+                Idea → 5 Angles → Editorial Direction → Editorial Brief
+              </p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[#736c61] hover:text-[#2d333b] rounded-lg hover:bg-[#eae4d7] transition-colors shrink-0 cursor-pointer"
+            title="Close Editorial Development"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[#736c61] hover:text-[#2d333b] rounded-lg hover:bg-[#eae4d7] transition-colors shrink-0 cursor-pointer"
-          title="Close Editorial Development"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </div>
+      )}
 
-      {/* Workflow Step Progress Bar */}
-      <div className="px-4 sm:px-6 py-2.5 bg-[#f0ede4] border-b border-[#e2dcce] flex items-center justify-between gap-1 text-xs shrink-0 overflow-x-auto">
-        {/* Step 1: Idea */}
-        <button
-          type="button"
-          onClick={() => setActiveStep('idea')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
-            activeStep === 'idea'
-              ? 'bg-[#1e232a] text-white shadow-2xs'
-              : 'text-[#5c5447] hover:bg-[#e4ded0]'
-          }`}
-        >
-          <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">1</span>
-          <span>Idea</span>
-        </button>
-        <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
+      {/* Workflow Step Progress Bar (Shown in drawer mode; Workspace mode renders the full 6-stage stepper) */}
+      {!isWorkspaceMode && (
+        <div className="px-4 sm:px-6 py-2.5 bg-[#f0ede4] border-b border-[#e2dcce] flex items-center justify-between gap-1 text-xs shrink-0 overflow-x-auto">
+          {/* Step 1: Idea */}
+          <button
+            type="button"
+            onClick={() => setActiveStep('idea')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
+              activeStep === 'idea'
+                ? 'bg-[#1e232a] text-white shadow-2xs'
+                : 'text-[#5c5447] hover:bg-[#e4ded0]'
+            }`}
+          >
+            <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">1</span>
+            <span>Idea</span>
+          </button>
+          <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
 
-        {/* Step 2: 5 Angles */}
-        <button
-          type="button"
-          onClick={() => setActiveStep('angles')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
-            activeStep === 'angles'
-              ? 'bg-[#1e232a] text-white shadow-2xs'
-              : 'text-[#5c5447] hover:bg-[#e4ded0]'
-          }`}
-        >
-          <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">2</span>
-          <span>5 Angles</span>
-          {currentDev.angles && currentDev.angles.length > 0 && (
-            <span className="text-[10px] text-amber-300 font-bold">({currentDev.angles.length})</span>
-          )}
-        </button>
-        <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
+          {/* Step 2: 5 Angles */}
+          <button
+            type="button"
+            onClick={() => setActiveStep('angles')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
+              activeStep === 'angles'
+                ? 'bg-[#1e232a] text-white shadow-2xs'
+                : 'text-[#5c5447] hover:bg-[#e4ded0]'
+            }`}
+          >
+            <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">2</span>
+            <span>5 Angles</span>
+            {currentDev.angles && currentDev.angles.length > 0 && (
+              <span className="text-[10px] text-amber-300 font-bold">({currentDev.angles.length})</span>
+            )}
+          </button>
+          <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
 
-        {/* Step 3: Direction */}
-        <button
-          type="button"
-          onClick={() => setActiveStep('direction')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
-            activeStep === 'direction'
-              ? 'bg-[#1e232a] text-white shadow-2xs'
-              : 'text-[#5c5447] hover:bg-[#e4ded0]'
-          }`}
-        >
-          <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">3</span>
-          <span>Direction</span>
-          {currentDev.direction?.primaryAngleId && (
-            <Check className="w-3 h-3 text-emerald-600" />
-          )}
-        </button>
-        <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
+          {/* Step 3: Direction */}
+          <button
+            type="button"
+            onClick={() => setActiveStep('direction')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
+              activeStep === 'direction'
+                ? 'bg-[#1e232a] text-white shadow-2xs'
+                : 'text-[#5c5447] hover:bg-[#e4ded0]'
+            }`}
+          >
+            <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">3</span>
+            <span>Direction</span>
+            {currentDev.direction?.primaryAngleId && (
+              <Check className="w-3 h-3 text-emerald-600" />
+            )}
+          </button>
+          <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
 
-        {/* Step 4: Editorial Brief */}
-        <button
-          type="button"
-          onClick={() => setActiveStep('brief')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
-            activeStep === 'brief'
-              ? 'bg-[#1e232a] text-white shadow-2xs'
-              : 'text-[#5c5447] hover:bg-[#e4ded0]'
-          }`}
-        >
-          <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">4</span>
-          <span>Brief</span>
-          {currentDev.brief && (
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-          )}
-        </button>
-        <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
+          {/* Step 4: Editorial Brief */}
+          <button
+            type="button"
+            onClick={() => setActiveStep('brief')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 ${
+              activeStep === 'brief'
+                ? 'bg-[#1e232a] text-white shadow-2xs'
+                : 'text-[#5c5447] hover:bg-[#e4ded0]'
+            }`}
+          >
+            <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">4</span>
+            <span>Brief</span>
+            {currentDev.brief && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            )}
+          </button>
+          <ChevronRight className="w-3.5 h-3.5 text-[#b0a797] shrink-0" />
 
-        {/* Step 5: Outline (Outline Studio) */}
-        <button
-          type="button"
-          onClick={() => {
-            if (onOpenOutline) {
-              onClose();
-              onOpenOutline();
-            }
-          }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 text-[#5c5447] hover:bg-[#e4ded0] cursor-pointer"
-          title="Open Outline Studio"
-        >
-          <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">5</span>
-          <span>Outline Studio</span>
-          {project.outline && project.outline.length > 0 ? (
-            <span className="text-[10px] text-blue-900 font-bold">({project.outline.length})</span>
-          ) : (
-            <ArrowRight className="w-3 h-3 text-[#736c61]" />
-          )}
-        </button>
-      </div>
+          {/* Step 5: Outline (Outline Studio) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenOutline) {
+                onClose();
+                onOpenOutline();
+              }
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-semibold transition-colors shrink-0 text-[#5c5447] hover:bg-[#e4ded0] cursor-pointer"
+            title="Open Outline Studio"
+          >
+            <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">5</span>
+            <span>Outline Studio</span>
+            {project.outline && project.outline.length > 0 ? (
+              <span className="text-[10px] text-blue-900 font-bold">({project.outline.length})</span>
+            ) : (
+              <ArrowRight className="w-3 h-3 text-[#736c61]" />
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 p-3.5 sm:p-6 space-y-5 sm:space-y-6">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 p-4 sm:p-6 md:p-8 space-y-5 sm:space-y-6">
 
         {/* ================================================================= */}
         {/* STEP 1: IDEA                                                      */}
         {/* ================================================================= */}
         {activeStep === 'idea' && (
           <div className="space-y-5 animate-in fade-in duration-100 min-w-0">
-            <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-4 flex items-start gap-3 min-w-0">
-              <Compass className="w-5 h-5 text-amber-800 shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-950 min-w-0">
-                <p className="font-semibold text-sm mb-0.5">Originating Concept</p>
-                <p className="text-amber-900/90 leading-relaxed">
-                  Every Science of Gifts article begins with an idea. Review and calibrate the core concept below before exploring 5 genuinely different editorial approaches.
-                </p>
+            <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
+              <div className="flex items-start gap-3 min-w-0 flex-1">
+                <Compass className="w-5 h-5 text-amber-800 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-950 min-w-0">
+                  <p className="font-semibold text-sm mb-0.5">Originating Concept</p>
+                  <p className="text-amber-900/90 leading-relaxed">
+                    Every Science of Gifts article begins with an idea. Review and calibrate the core concept below before exploring 5 genuinely different editorial approaches.
+                  </p>
+                </div>
               </div>
+              {onOpenIdeaGenerator && (
+                <button
+                  type="button"
+                  onClick={onOpenIdeaGenerator}
+                  className="px-3 py-1.5 text-xs font-semibold text-amber-950 bg-white hover:bg-amber-100/80 border border-amber-300 rounded-lg transition-colors inline-flex items-center gap-1.5 shrink-0 self-start sm:self-center cursor-pointer shadow-2xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-800" />
+                  <span>Browse Idea Generator</span>
+                </button>
+              )}
             </div>
 
             {/* Editable Idea Fields */}
@@ -1714,7 +1751,9 @@ ${brief.styleConsiderations ? `## STYLE CONSIDERATIONS\n${brief.styleConsiderati
                             type="button"
                             onClick={() => {
                               applyBriefToProject(brief);
-                              onClose();
+                              if (!isWorkspaceMode) {
+                                onClose();
+                              }
                               onOpenOutline();
                             }}
                             className="flex-1 sm:flex-none px-5 py-2.5 rounded-xl font-semibold text-xs text-white bg-[#1e232a] hover:bg-[#2d3744] transition-all flex items-center justify-center gap-2 shadow-2xs cursor-pointer"

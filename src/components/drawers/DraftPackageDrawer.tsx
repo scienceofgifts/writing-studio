@@ -42,6 +42,9 @@ interface DraftPackageDrawerProps {
   onUpdateProject?: (updatedProject: WritingProject) => void;
   onOpenOutline?: () => void;
   onOpenDevelop?: () => void;
+  onOpenArticleEditor?: () => void;
+  onReturnToArticles?: () => void;
+  variant?: 'drawer' | 'workspace';
 }
 
 export const DraftPackageDrawer: React.FC<DraftPackageDrawerProps> = ({
@@ -51,9 +54,12 @@ export const DraftPackageDrawer: React.FC<DraftPackageDrawerProps> = ({
   onUpdateProject,
   onOpenOutline,
   onOpenDevelop,
+  onOpenArticleEditor,
+  onReturnToArticles,
+  variant = 'drawer',
 }) => {
   // Active Tab: 'overview' | 'prompt' | 'progressive'
-  const [activeTab, setActiveTab] = useState<'overview' | 'prompt' | 'progressive'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'prompt' | 'progressive'>('prompt');
 
   // Customization controls
   const [modelTarget, setModelTarget] = useState<'chatgpt' | 'claude' | 'generic'>('chatgpt');
@@ -185,29 +191,37 @@ export const DraftPackageDrawer: React.FC<DraftPackageDrawerProps> = ({
     }
   };
 
+  const isWorkspaceMode = variant === 'workspace';
+  const isPackageComplete =
+    copiedMasterPrompt || project.editorialDevelopment?.status === 'draft_package_ready';
+
   return (
     <div
-      role="dialog"
-      aria-modal="true"
+      role={isWorkspaceMode ? 'region' : 'dialog'}
+      aria-modal={isWorkspaceMode ? undefined : 'true'}
       aria-labelledby="draft-package-title"
-      className="fixed inset-y-0 right-0 z-50 w-full sm:max-w-4xl md:max-w-5xl bg-[#fbf9f4] shadow-2xl border-l border-[#e5dfd3] flex flex-col animate-in slide-in-from-right duration-200"
+      className={
+        isWorkspaceMode
+          ? 'w-full max-w-5xl mx-auto min-w-0 flex-1 bg-[#fbf9f4] border border-[#e5dfd3] rounded-2xl shadow-xs flex flex-col overflow-hidden'
+          : 'fixed inset-y-0 right-0 z-50 w-full sm:max-w-4xl md:max-w-5xl bg-[#fbf9f4] shadow-2xl border-l border-[#e5dfd3] flex flex-col animate-in slide-in-from-right duration-200'
+      }
     >
       {/* ========================================================================= */}
       {/* 1. HEADER & EDITORIAL WORKFLOW PROGRESSION                                */}
       {/* ========================================================================= */}
-      <div className="bg-[#f7f5ef] border-b border-[#e5dfd3] px-6 py-4 flex flex-col gap-3 shrink-0">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#1e232a] text-amber-300 flex items-center justify-center shadow-xs">
+      <div className="bg-[#f7f5ef] border-b border-[#e5dfd3] px-4 sm:px-6 py-4 flex flex-col gap-3 shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-[#1e232a] text-amber-300 flex items-center justify-center shadow-xs shrink-0">
               <Sparkles className="w-5 h-5 text-amber-400" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 id="draft-package-title" className="text-base font-bold font-editorial text-[#1e232a]">
-                  Editorial Draft Package & External Model Export
+                  Editorial Draft Package & External Model Prompt
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  Ready for ChatGPT
+                  {isPackageComplete ? 'Development Complete' : 'Ready for ChatGPT'}
                 </span>
               </div>
               <p className="text-xs text-[#6e685f]">
@@ -216,7 +230,7 @@ export const DraftPackageDrawer: React.FC<DraftPackageDrawerProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={handleCopyMasterPrompt}
@@ -259,59 +273,63 @@ export const DraftPackageDrawer: React.FC<DraftPackageDrawerProps> = ({
               <Download className="w-4 h-4" />
             </button>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 text-[#736c61] hover:text-[#1e232a] hover:bg-[#eae4d7] rounded-lg transition-colors cursor-pointer"
-              title="Close Draft Package"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!isWorkspaceMode && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 text-[#736c61] hover:text-[#1e232a] hover:bg-[#eae4d7] rounded-lg transition-colors cursor-pointer"
+                title="Close Draft Package"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Workflow Breadcrumb Stepper */}
-        <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] font-medium pt-1 text-[#787166]">
-          <span
-            onClick={onOpenDevelop}
-            className="cursor-pointer hover:text-[#1e232a] hover:underline flex items-center gap-1"
-          >
-            Idea
-          </span>
-          <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
-          <span
-            onClick={onOpenDevelop}
-            className="cursor-pointer hover:text-[#1e232a] hover:underline"
-          >
-            5 Angles
-          </span>
-          <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
-          <span
-            onClick={onOpenDevelop}
-            className="cursor-pointer hover:text-[#1e232a] hover:underline"
-          >
-            Direction
-          </span>
-          <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
-          <span
-            onClick={onOpenDevelop}
-            className="cursor-pointer hover:text-[#1e232a] hover:underline"
-          >
-            Brief
-          </span>
-          <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
-          <span
-            onClick={onOpenOutline}
-            className="cursor-pointer hover:text-[#1e232a] hover:underline flex items-center gap-1"
-          >
-            Outline ({draftPackage.outline.sections.length} steps)
-          </span>
-          <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
-          <span className="font-bold text-[#1e232a] bg-[#ebe5d8] px-2 py-0.5 rounded-md border border-[#dcd6ca] flex items-center gap-1">
-            <Sparkles className="w-3 h-3 text-amber-700" />
-            Draft Package
-          </span>
-        </div>
+        {/* Workflow Breadcrumb Stepper (Drawer mode only; Workspace mode has its own unified 6-stage bar) */}
+        {!isWorkspaceMode && (
+          <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] font-medium pt-1 text-[#787166]">
+            <span
+              onClick={onOpenDevelop}
+              className="cursor-pointer hover:text-[#1e232a] hover:underline flex items-center gap-1"
+            >
+              Idea
+            </span>
+            <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
+            <span
+              onClick={onOpenDevelop}
+              className="cursor-pointer hover:text-[#1e232a] hover:underline"
+            >
+              5 Angles
+            </span>
+            <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
+            <span
+              onClick={onOpenDevelop}
+              className="cursor-pointer hover:text-[#1e232a] hover:underline"
+            >
+              Direction
+            </span>
+            <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
+            <span
+              onClick={onOpenDevelop}
+              className="cursor-pointer hover:text-[#1e232a] hover:underline"
+            >
+              Brief
+            </span>
+            <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
+            <span
+              onClick={onOpenOutline}
+              className="cursor-pointer hover:text-[#1e232a] hover:underline flex items-center gap-1"
+            >
+              Outline ({draftPackage.outline.sections.length} steps)
+            </span>
+            <ArrowRight className="w-3 h-3 text-[#b5ad9e] shrink-0" />
+            <span className="font-bold text-[#1e232a] bg-[#ebe5d8] px-2 py-0.5 rounded-md border border-[#dcd6ca] flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-amber-700" />
+              Draft Package
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -1057,25 +1075,46 @@ export const DraftPackageDrawer: React.FC<DraftPackageDrawerProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 4. FOOTER                                                                 */}
+      {/* 4. FOOTER & DELIBERATE WORKSPACE TRANSITIONS                              */}
       {/* ========================================================================= */}
-      <div className="bg-[#f7f5ef] border-t border-[#e5dfd3] px-6 py-3.5 flex items-center justify-between gap-4 shrink-0">
-        <div className="flex items-center gap-3 text-xs text-[#6e685f]">
-          <span className="font-semibold text-[#1e232a] font-editorial">
-            Science of Gifts Editorial Studio
+      <div className="bg-[#f7f5ef] border-t border-[#e5dfd3] px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-2.5 text-xs text-[#6e685f]">
+          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+          <span className="font-semibold text-[#1e232a]">
+            Editorial Development Complete:
           </span>
-          <span>•</span>
-          <span>Handoff Phase 6</span>
+          <span>Copy the prompt for ChatGPT or open the Article Editor when ready to edit prose.</span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {onOpenOutline && (
             <button
               type="button"
               onClick={onOpenOutline}
-              className="px-3.5 py-1.5 text-xs font-semibold text-[#5c5447] hover:text-[#1e232a] hover:bg-[#eae4d7] rounded-lg transition-colors cursor-pointer"
+              className="px-3 py-1.5 text-xs font-semibold text-[#5c5447] hover:text-[#1e232a] hover:bg-[#eae4d7] rounded-lg transition-colors cursor-pointer"
             >
-              Back to Outline Studio
+              ← Outline Studio
+            </button>
+          )}
+
+          {onReturnToArticles && (
+            <button
+              type="button"
+              onClick={onReturnToArticles}
+              className="px-3.5 py-1.5 text-xs font-semibold text-[#1e232a] bg-white hover:bg-[#ede8dc] border border-[#dcd6ca] rounded-lg transition-colors cursor-pointer shadow-2xs"
+            >
+              Return to Articles
+            </button>
+          )}
+
+          {onOpenArticleEditor && (
+            <button
+              type="button"
+              onClick={onOpenArticleEditor}
+              className="px-3.5 py-1.5 text-xs font-semibold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <span>Open Article Editor</span>
+              <ArrowRight className="w-3.5 h-3.5 text-amber-800" />
             </button>
           )}
 

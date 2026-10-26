@@ -285,16 +285,21 @@ export const Editor: React.FC<EditorProps> = ({
     } catch {}
   }, [editor, editingNotes, showEditingNotes, activePopoverNoteId, isNoteModalOpen, capturedAnchor]);
 
-  // Expose editor to parent if needed
+  // Expose editor to parent if needed and clean up on unmount
   useEffect(() => {
     if (editorRef) {
-      editorRef.current = editor;
+      editorRef.current = editor && !editor.isDestroyed ? editor : null;
     }
+    return () => {
+      if (editorRef) {
+        editorRef.current = null;
+      }
+    };
   }, [editor, editorRef]);
 
   // Only call setContent when switching to a completely different project
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     if (projectId && projectId !== currentProjectIdRef.current) {
       currentProjectIdRef.current = projectId;
       setActivePopoverNoteId(null);
@@ -320,7 +325,7 @@ export const Editor: React.FC<EditorProps> = ({
 
   // Handle explicit external restore triggers (e.g. restoring version snapshots or accepting AI diff proposals)
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     if (restoreTrigger !== undefined && restoreTrigger !== prevRestoreTriggerRef.current) {
       prevRestoreTriggerRef.current = restoreTrigger;
       editor.commands.setContent(content || '', { emitUpdate: false });
@@ -339,8 +344,9 @@ export const Editor: React.FC<EditorProps> = ({
 
   // Listen for explicit external restore custom events
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const handleRestoreEvent = (e: CustomEvent<{ content: string; projectId?: string }>) => {
+      if (!editor || editor.isDestroyed) return;
       if (e.detail?.projectId && projectId && e.detail.projectId !== projectId) {
         return;
       }

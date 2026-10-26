@@ -518,6 +518,7 @@ export interface WritingProject {
   selectedClaimIds?: string[]; // Specifically chosen claims for editorial use
   citationRecommendations?: CitationRecommendation[]; // Research citation recommendations
   citedStudies?: CitedStudyReference[]; // Sources currently cited in the article text with active numbering
+  originatingIdeaId?: string; // ID of the originating idea from Idea Generator or Research Library
   editorialDevelopment?: EditorialDevelopment; // Editorial development workflow (Idea -> Angles -> Direction -> Brief)
   outlineStructure?: OutlineStructureType; // Applied structure type (essay, standard_article, guide, custom)
   outlineRationale?: string; // Editorial rationale for this outline progression

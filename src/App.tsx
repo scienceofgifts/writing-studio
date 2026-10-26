@@ -66,10 +66,13 @@ import { ResearchLibraryView } from './components/research/ResearchLibraryView';
 import { ResearchStudyWorkspace } from './components/research/ResearchStudyWorkspace';
 import { ResearchDrawer } from './components/drawers/ResearchDrawer';
 import { CitationStudioDrawer } from './components/drawers/CitationStudioDrawer';
+import { EditorialDevelopmentWorkspace } from './components/workspaces/EditorialDevelopmentWorkspace';
+import { findExistingProjectForIdea } from './utils/editorialDevelopmentUtils';
 
 type AppView =
   | 'dashboard'
   | 'workspace'
+  | 'editorial_development'
   | 'settings'
   | 'style_reference'
   | 'internal_links'
@@ -263,7 +266,7 @@ export default function App() {
 
   const handleTogglePanel = useCallback((panel: Exclude<ActivePanel, null>) => {
     if (panel === 'review') {
-      if (editorRef.current) {
+      if (editorRef.current && !editorRef.current.isDestroyed) {
         try {
           const { from, to } = editorRef.current.state.selection;
           const text = editorRef.current.state.doc.textBetween(from, to, ' ').trim();
@@ -285,6 +288,22 @@ export default function App() {
   // Editor instance reference & Workspace container reference for in-document search
   const editorRef = useRef<any>(null);
   const workspaceContainerRef = useRef<HTMLDivElement>(null);
+
+  const syncLiveEditorContent = useCallback((content: string, projectId?: string) => {
+    const liveEditor = editorRef.current;
+    if (liveEditor && !liveEditor.isDestroyed) {
+      try {
+        liveEditor.commands.setContent(content, { emitUpdate: false });
+      } catch (e) {
+        console.warn('Could not sync live editor content directly:', e);
+      }
+    }
+    window.dispatchEvent(
+      new CustomEvent('sog:restore-editor-content', {
+        detail: { content, projectId },
+      })
+    );
+  }, []);
 
   const {
     matchCount: searchMatchCount,
@@ -555,7 +574,12 @@ export default function App() {
   // REQUIREMENT 3: PROTECT UNSAVED WORK WHEN LEAVING OR SWITCHING
   // =========================================================================
   const hasActiveUnsavedWork = useCallback((): boolean => {
-    if (currentView !== 'workspace' || !activeProjectIdRef.current) return false;
+    if (
+      (currentView !== 'workspace' && currentView !== 'editorial_development') ||
+      !activeProjectIdRef.current
+    ) {
+      return false;
+    }
     const currentWorking = projectsRef.current.find((p) => p.id === activeProjectIdRef.current);
     const baseline = savedBaselinesRef.current.get(activeProjectIdRef.current);
     return hasProjectUnsavedChanges(currentWorking, baseline);
@@ -598,14 +622,7 @@ export default function App() {
           projectsRef.current = next;
           return next;
         });
-        if (editorRef.current) {
-          editorRef.current.commands.setContent(baseline.content, { emitUpdate: false });
-        }
-        window.dispatchEvent(
-          new CustomEvent('sog:restore-editor-content', {
-            detail: { content: baseline.content, projectId: baseline.id },
-          })
-        );
+        syncLiveEditorContent(baseline.content, baseline.id);
         setSaveStatus(computeBaselineSaveStatus(baseline));
       }
     }
@@ -613,7 +630,7 @@ export default function App() {
     const nav = pendingNavigationRef.current;
     pendingNavigationRef.current = null;
     if (nav) nav();
-  }, [computeBaselineSaveStatus]);
+  }, [computeBaselineSaveStatus, syncLiveEditorContent]);
 
   const handleStayOnPage = useCallback(() => {
     setIsUnsavedModalOpen(false);
@@ -676,14 +693,9 @@ export default function App() {
         return next;
       });
 
-      if (editorRef.current && activeProjectIdRef.current === conflict.projectId) {
-        editorRef.current.commands.setContent(adoptedProject.content, { emitUpdate: false });
+      if (activeProjectIdRef.current === conflict.projectId) {
+        syncLiveEditorContent(adoptedProject.content, adoptedProject.id);
       }
-      window.dispatchEvent(
-        new CustomEvent('sog:restore-editor-content', {
-          detail: { content: adoptedProject.content, projectId: adoptedProject.id },
-        })
-      );
 
       setActiveConflict(null);
       setSaveStatus('saved_cloud');
@@ -823,14 +835,7 @@ export default function App() {
       };
 
       // Update editor canvas
-      if (editorRef.current) {
-        editorRef.current.commands.setContent(restoredProject.content, { emitUpdate: false });
-      }
-      window.dispatchEvent(
-        new CustomEvent('sog:restore-editor-content', {
-          detail: { content: restoredProject.content, projectId: restoredProject.id },
-        })
-      );
+      syncLiveEditorContent(restoredProject.content, restoredProject.id);
 
       // Save all checkpoints to independent store
       storage.saveProjectVersions(restoredProject.id, restoredProject.versionHistory || []);
@@ -906,11 +911,24 @@ export default function App() {
     [executeWithUnsavedGuard]
   );
 
-  // Use Generated Editorial Idea -> Creates new Article project (Guarded for unsaved changes)
+  // Use Generated Editorial Idea -> Reopens existing project or creates new Article project in Editorial Development Workspace
   const handleUseIdea = useCallback(
     (idea: EditorialIdea, targetAudience?: string) => {
       executeWithUnsavedGuard(() => {
+        const existingProject = findExistingProjectForIdea(projectsRef.current, idea);
+        if (existingProject) {
+          setActiveProjectId(existingProject.id);
+          setActivePanel(null);
+          setCurrentView('editorial_development');
+          toast.info(
+            'Editorial Development Reopened',
+            `Continuing development for "${existingProject.title}".`
+          );
+          return;
+        }
+
         const created = storage.createProject('article', idea.title, {
+          originatingIdeaId: idea.id,
           brief: {
             purpose: idea.whyInteresting,
             audience: targetAudience || 'Discerning gifters & readers',
@@ -970,18 +988,26 @@ export default function App() {
         setProjects(updatedList);
         projectsRef.current = updatedList;
         setActiveProjectId(created.id);
-        setActivePanel('develop');
+        setActivePanel(null);
         setSaveStatus('saved_local');
-        setCurrentView('workspace');
-        toast.success('Article Draft Created', `Loaded "${idea.title}" into Article Studio.`);
+        setCurrentView('editorial_development');
+        toast.success(
+          'Editorial Development Started',
+          `Opened "${idea.title}" in Editorial Development.`
+        );
       });
     },
     [executeWithUnsavedGuard]
   );
 
-  // Open existing project (Guarded for unsaved changes)
+  // Open existing project in Article Writing & Editing Workspace (Guarded for unsaved changes)
   const handleOpenProject = useCallback(
     (id: string) => {
+      if (id === activeProjectIdRef.current) {
+        setActivePanel(null);
+        setCurrentView('workspace');
+        return;
+      }
       executeWithUnsavedGuard(() => {
         setActiveProjectId(id);
         setActivePanel(null);
@@ -990,6 +1016,31 @@ export default function App() {
     },
     [executeWithUnsavedGuard]
   );
+
+  // Open existing project in Editorial Development Workspace
+  const handleOpenEditorialDevelopment = useCallback(
+    (id?: string) => {
+      const targetId = id || activeProjectIdRef.current;
+      if (!targetId) return;
+      if (targetId === activeProjectIdRef.current) {
+        setActivePanel(null);
+        setCurrentView('editorial_development');
+        return;
+      }
+      executeWithUnsavedGuard(() => {
+        setActiveProjectId(targetId);
+        setActivePanel(null);
+        setCurrentView('editorial_development');
+      });
+    },
+    [executeWithUnsavedGuard]
+  );
+
+  // Switch from Editorial Development Workspace to Article Writing & Editing Workspace for active project
+  const handleOpenArticleEditor = useCallback(() => {
+    setActivePanel(null);
+    setCurrentView('workspace');
+  }, []);
 
   // Delete project
   const handleDeleteProject = (id: string) => {
@@ -1093,6 +1144,7 @@ export default function App() {
 
     if (
       editorRef.current &&
+      !editorRef.current.isDestroyed &&
       proposal.range &&
       proposal.range.start !== undefined &&
       proposal.range.end !== undefined &&
@@ -1136,14 +1188,7 @@ export default function App() {
       newContent = `${activeProject.content}\n${ensureSemanticHtml(proposal.proposedText)}`;
     }
 
-    if (editorRef.current) {
-      editorRef.current.commands.setContent(newContent, { emitUpdate: false });
-    }
-    window.dispatchEvent(
-      new CustomEvent('sog:restore-editor-content', {
-        detail: { content: newContent, projectId: activeProject.id },
-      })
-    );
+    syncLiveEditorContent(newContent, activeProject.id);
 
     handleUpdateActiveProject({
       ...activeProject,
@@ -1198,14 +1243,7 @@ export default function App() {
       o.id === opp.id ? { ...o, status: 'accepted' as const } : o
     );
 
-    if (editorRef.current) {
-      editorRef.current.commands.setContent(res.updatedHtml, { emitUpdate: false });
-    }
-    window.dispatchEvent(
-      new CustomEvent('sog:restore-editor-content', {
-        detail: { content: res.updatedHtml, projectId: activeProject.id },
-      })
-    );
+    syncLiveEditorContent(res.updatedHtml, activeProject.id);
 
     handleUpdateActiveProject({
       ...activeProject,
@@ -1265,14 +1303,7 @@ export default function App() {
       insertedIds.includes(o.id) ? { ...o, status: 'accepted' as const } : o
     );
 
-    if (editorRef.current) {
-      editorRef.current.commands.setContent(currentHtml, { emitUpdate: false });
-    }
-    window.dispatchEvent(
-      new CustomEvent('sog:restore-editor-content', {
-        detail: { content: currentHtml, projectId: activeProject.id },
-      })
-    );
+    syncLiveEditorContent(currentHtml, activeProject.id);
 
     handleUpdateActiveProject({
       ...activeProject,
@@ -1363,14 +1394,7 @@ export default function App() {
           mode: 'full',
         };
 
-    if (editorRef.current) {
-      editorRef.current.commands.setContent(newContent, { emitUpdate: false });
-    }
-    window.dispatchEvent(
-      new CustomEvent('sog:restore-editor-content', {
-        detail: { content: newContent, projectId: activeProject.id },
-      })
-    );
+    syncLiveEditorContent(newContent, activeProject.id);
 
     handleUpdateActiveProject({
       ...activeProject,
@@ -1405,14 +1429,7 @@ export default function App() {
       ),
     };
 
-    if (editorRef.current) {
-      editorRef.current.commands.setContent(currentHtml, { emitUpdate: false });
-    }
-    window.dispatchEvent(
-      new CustomEvent('sog:restore-editor-content', {
-        detail: { content: currentHtml, projectId: activeProject.id },
-      })
-    );
+    syncLiveEditorContent(currentHtml, activeProject.id);
 
     handleUpdateActiveProject({
       ...activeProject,
@@ -1506,14 +1523,7 @@ export default function App() {
           categoryChecks: [],
         };
 
-    if (editorRef.current) {
-      editorRef.current.commands.setContent(newContent, { emitUpdate: false });
-    }
-    window.dispatchEvent(
-      new CustomEvent('sog:restore-editor-content', {
-        detail: { content: newContent, projectId: activeProject.id },
-      })
-    );
+    syncLiveEditorContent(newContent, activeProject.id);
 
     handleUpdateActiveProject({
       ...activeProject,
@@ -1528,7 +1538,7 @@ export default function App() {
   };
 
   const getSelectedText = () => {
-    if (editorRef.current) {
+    if (editorRef.current && !editorRef.current.isDestroyed) {
       try {
         const { from, to } = editorRef.current.state.selection;
         const liveText = editorRef.current.state.doc.textBetween(from, to, ' ').trim();
@@ -1602,6 +1612,8 @@ export default function App() {
           });
         }}
         onCreateProject={handleCreateProject}
+        onOpenEditorialDevelopment={() => handleOpenEditorialDevelopment()}
+        onOpenArticleEditor={handleOpenArticleEditor}
       />
 
       {/* In-Document Search Floating Bar */}
@@ -1633,6 +1645,7 @@ export default function App() {
               <Dashboard
                 projects={projects}
                 onOpenProject={handleOpenProject}
+                onOpenEditorialDevelopment={handleOpenEditorialDevelopment}
                 onCreateProject={handleCreateProject}
                 onDeleteProject={handleDeleteProject}
                 onDuplicateProject={handleDuplicateProject}
@@ -1712,6 +1725,30 @@ export default function App() {
               />
             )}
 
+            {/* Workspace A: Dedicated Editorial Development Workspace */}
+            {currentView === 'editorial_development' && activeProject && (
+              <EditorialDevelopmentWorkspace
+                project={activeProject}
+                onChange={handleUpdateActiveProject}
+                onDraftSection={handleDraftSectionFromOutline}
+                onOpenArticleEditor={handleOpenArticleEditor}
+                onReturnToArticles={() =>
+                  executeWithUnsavedGuard(() => {
+                    setActivePanel(null);
+                    setCurrentView('dashboard');
+                  })
+                }
+                onOpenIdeaGenerator={() =>
+                  executeWithUnsavedGuard(() => {
+                    setActivePanel(null);
+                    setCurrentView('idea_generator');
+                  })
+                }
+                activePanel={activePanel}
+                onTogglePanel={handleTogglePanel}
+              />
+            )}
+
             {/* Phase 5: Specialized Gift Guide Studio */}
             {currentView === 'workspace' &&
               activeProject &&
@@ -1740,13 +1777,14 @@ export default function App() {
                 />
               )}
 
-            {/* Phase 2: Article Workspace */}
+            {/* Workspace B: Article Writing & Editing Workspace */}
             {currentView === 'workspace' && activeProject && activeProject.type === 'article' && (
               <ArticleWorkspace
                 project={activeProject}
                 editorRef={editorRef}
                 activePanel={activePanel}
                 onTogglePanel={handleTogglePanel}
+                onOpenEditorialDevelopment={() => handleOpenEditorialDevelopment()}
                 onOpenOutline={() => setActivePanel('outline')}
                 onOpenBrief={() => setActivePanel('brief')}
                 onOpenDraftPackage={() => setActivePanel('draft_package')}
@@ -1777,7 +1815,9 @@ export default function App() {
               handleUpdateActiveProject({ ...activeProject, brief: updatedBrief })
             }
             onOpenDevelop={
-              activeProject.type === 'article' ? () => setActivePanel('develop') : undefined
+              activeProject.type === 'article'
+                ? () => handleOpenEditorialDevelopment()
+                : undefined
             }
           />
         )}
@@ -1793,7 +1833,7 @@ export default function App() {
             }
             onUpdateProject={handleUpdateActiveProject}
             onDraftSection={handleDraftSectionFromOutline}
-            onOpenDevelop={() => setActivePanel('develop')}
+            onOpenDevelop={() => handleOpenEditorialDevelopment()}
             onOpenDraftPackage={() => setActivePanel('draft_package')}
           />
         )}
@@ -1805,7 +1845,7 @@ export default function App() {
             project={activeProject}
             onUpdateProject={handleUpdateActiveProject}
             onOpenOutline={() => setActivePanel('outline')}
-            onOpenDevelop={() => setActivePanel('develop')}
+            onOpenDevelop={() => handleOpenEditorialDevelopment()}
           />
         )}
 
@@ -1916,19 +1956,23 @@ export default function App() {
           />
         )}
 
-        {/* Research Drawer */}
-        {currentView === 'workspace' && activeProject && activePanel === 'research' && (
-          <ResearchDrawer
-            isOpen={true}
-            onClose={handleClosePanel}
-            project={activeProject}
-            onUpdateProject={handleUpdateActiveProject}
-            onNavigateToResearchLibrary={() =>
-              executeWithUnsavedGuard(() => setCurrentView('research'))
-            }
-            onOpenCitationStudio={() => setActivePanel('citations')}
-          />
-        )}
+        {/* Research Drawer (Available in both Article Editor and Editorial Development Workspace) */}
+        {(currentView === 'workspace' || currentView === 'editorial_development') &&
+          activeProject &&
+          activePanel === 'research' && (
+            <ResearchDrawer
+              isOpen={true}
+              onClose={handleClosePanel}
+              project={activeProject}
+              onUpdateProject={handleUpdateActiveProject}
+              onNavigateToResearchLibrary={() =>
+                executeWithUnsavedGuard(() => setCurrentView('research'))
+              }
+              onOpenCitationStudio={
+                currentView === 'workspace' ? () => setActivePanel('citations') : undefined
+              }
+            />
+          )}
 
         {/* Citation Studio Drawer */}
         {currentView === 'workspace' && activeProject && activePanel === 'citations' && (

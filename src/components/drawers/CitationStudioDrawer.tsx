@@ -124,8 +124,10 @@ export const CitationStudioDrawer: React.FC<CitationStudioDrawerProps> = ({
   if (!isOpen) return null;
 
   const syncEditorContent = (updatedHtml: string) => {
-    if (editorRef?.current) {
-      editorRef.current.commands.setContent(updatedHtml, { emitUpdate: false });
+    if (editorRef?.current && !editorRef.current.isDestroyed) {
+      try {
+        editorRef.current.commands.setContent(updatedHtml, { emitUpdate: false });
+      } catch {}
     }
     window.dispatchEvent(
       new CustomEvent('sog:restore-editor-content', {

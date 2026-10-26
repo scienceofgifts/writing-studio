@@ -5,6 +5,7 @@
  */
 
 import {
+  WritingProject,
   EditorialAngle,
   EditorialDirection,
   EditorialDevelopment,
@@ -15,6 +16,14 @@ import {
 import { EditorialIdea } from '../types/ideaGenerator';
 
 export type WorkflowStep = 'idea' | 'angles' | 'direction' | 'brief';
+
+export type DevelopmentWorkspaceStage =
+  | 'idea'
+  | 'angles'
+  | 'direction'
+  | 'brief'
+  | 'outline'
+  | 'draft_package';
 
 /**
  * Determines the initial workflow step when opening or restoring a project's
@@ -34,6 +43,158 @@ export function determineInitialDevelopmentStep(dev?: EditorialDevelopment): Wor
   if (dev.status === 'direction_set') return 'direction';
   if (dev.angles && dev.angles.length > 0) return 'angles';
   return 'idea';
+}
+
+/**
+ * Determines the initial stage in the dedicated Editorial Development Workspace (Workspace A)
+ * when opening or reopening a project.
+ *
+ * Restores downstream Outline Studio or Draft Package position if the project has already
+ * reached those stages, otherwise restores the appropriate upstream step ('idea' | 'angles' | 'direction' | 'brief').
+ */
+export function determineInitialWorkspaceStage(
+  project?: WritingProject | null
+): DevelopmentWorkspaceStage {
+  if (!project) return 'idea';
+  const dev = project.editorialDevelopment;
+  if (!dev) {
+    if (project.outline && project.outline.length > 0) return 'outline';
+    return 'idea';
+  }
+  if (dev.status === 'draft_package_ready') {
+    return 'draft_package';
+  }
+  if (
+    dev.status === 'outline_ready' ||
+    (project.outline && project.outline.length > 0 && Boolean(dev.brief))
+  ) {
+    return 'outline';
+  }
+  return determineInitialDevelopmentStep(dev);
+}
+
+/**
+ * Computes which stages in the Editorial Development Workspace have been completed for a project.
+ */
+export function getCompletedWorkspaceStages(
+  project?: WritingProject | null
+): DevelopmentWorkspaceStage[] {
+  if (!project) return [];
+  const dev = project.editorialDevelopment;
+  const completed: DevelopmentWorkspaceStage[] = [];
+
+  const hasIdea = Boolean(
+    (dev?.originalIdea?.title || project.title || '').trim() &&
+      ((dev?.angles && dev.angles.length > 0) ||
+        (dev?.status && dev.status !== 'idea') ||
+        Boolean(dev?.brief))
+  );
+  if (hasIdea) completed.push('idea');
+
+  const hasAngles = Boolean(dev?.angles && dev.angles.length > 0);
+  if (hasAngles) completed.push('angles');
+
+  const hasDirection = Boolean(
+    dev?.direction?.primaryAngleId ||
+      (dev?.direction?.editorsDirection || '').trim() ||
+      dev?.status === 'direction_set' ||
+      dev?.status === 'brief_ready' ||
+      dev?.status === 'outline_ready' ||
+      dev?.status === 'draft_package_ready' ||
+      Boolean(dev?.brief)
+  );
+  if (hasDirection) completed.push('direction');
+
+  if (dev?.brief) completed.push('brief');
+
+  if (project.outline && project.outline.length > 0) {
+    completed.push('outline');
+  }
+
+  if (dev?.status === 'draft_package_ready') {
+    completed.push('draft_package');
+  }
+
+  return completed;
+}
+
+/**
+ * Returns the next available action label and target stage for the active stage in Workspace A.
+ */
+export function getNextAvailableWorkspaceAction(
+  project: WritingProject | null | undefined,
+  activeStage: DevelopmentWorkspaceStage
+): {
+  label: string;
+  targetStage: DevelopmentWorkspaceStage | 'article_editor';
+} {
+  switch (activeStage) {
+    case 'idea':
+      return {
+        label:
+          project?.editorialDevelopment?.angles && project.editorialDevelopment.angles.length > 0
+            ? 'Review 5 Angles'
+            : 'Generate 5 Angles',
+        targetStage: 'angles',
+      };
+    case 'angles':
+      return {
+        label: 'Proceed to Editorial Direction',
+        targetStage: 'direction',
+      };
+    case 'direction':
+      return {
+        label: project?.editorialDevelopment?.brief
+          ? 'Review Editorial Brief'
+          : 'Synthesize Editorial Brief',
+        targetStage: 'brief',
+      };
+    case 'brief':
+      return {
+        label: 'Proceed to Outline Studio',
+        targetStage: 'outline',
+      };
+    case 'outline':
+      return {
+        label: 'Assemble Draft Package & Prompt',
+        targetStage: 'draft_package',
+      };
+    case 'draft_package':
+      return {
+        label: 'Open Article Editor',
+        targetStage: 'article_editor',
+      };
+  }
+}
+
+/**
+ * Finds an existing non-deleted Article project that originated from the given EditorialIdea,
+ * preventing duplicate project creation or loss of in-progress development work when reopening an idea.
+ */
+export function findExistingProjectForIdea(
+  projects: WritingProject[],
+  idea: EditorialIdea
+): WritingProject | undefined {
+  if (!Array.isArray(projects) || !idea) return undefined;
+  const normalizedTitle = (idea.title || '').trim().toLowerCase();
+  const normalizedAngle = (idea.angle || '').trim().toLowerCase();
+
+  return projects.find((p) => {
+    if (!p || p._isDeleted || p.type !== 'article') return false;
+    if (idea.id && (p.originatingIdeaId === idea.id || p.editorialDevelopment?.originalIdea?.id === idea.id)) {
+      return true;
+    }
+    const projIdeaTitle = (p.editorialDevelopment?.originalIdea?.title || '').trim().toLowerCase();
+    const projIdeaAngle = (p.editorialDevelopment?.originalIdea?.angle || '').trim().toLowerCase();
+    if (
+      normalizedTitle &&
+      projIdeaTitle === normalizedTitle &&
+      (!normalizedAngle || !projIdeaAngle || projIdeaAngle === normalizedAngle)
+    ) {
+      return true;
+    }
+    return false;
+  });
 }
 
 /**

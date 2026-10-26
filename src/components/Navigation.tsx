@@ -40,7 +40,16 @@ import {
 import { CloudSyncBar } from './CloudSyncBar';
 
 interface NavigationProps {
-  currentView: 'dashboard' | 'workspace' | 'settings' | 'style_reference' | 'internal_links' | 'idea_generator' | 'backup' | 'research';
+  currentView:
+    | 'dashboard'
+    | 'workspace'
+    | 'editorial_development'
+    | 'settings'
+    | 'style_reference'
+    | 'internal_links'
+    | 'idea_generator'
+    | 'backup'
+    | 'research';
   activeProject: WritingProject | null;
   saveStatus: ProjectSaveStatus;
   onManualSave?: () => void;
@@ -53,6 +62,8 @@ interface NavigationProps {
     projectType?: ProjectType
   ) => void;
   onCreateProject: (type: ProjectType) => void;
+  onOpenEditorialDevelopment?: () => void;
+  onOpenArticleEditor?: () => void;
   onOpenBrief?: () => void;
   onOpenOutline?: () => void;
   onOpenRules?: () => void;
@@ -72,6 +83,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   onTogglePanel,
   onNavigate,
   onCreateProject,
+  onOpenEditorialDevelopment,
+  onOpenArticleEditor,
   onOpenBrief,
   onOpenOutline,
   onOpenRules,
@@ -508,7 +521,78 @@ export const Navigation: React.FC<NavigationProps> = ({
       </header>
 
       {/* ========================================================================= */}
-      {/* TIER 2: CONTEXTUAL PROJECT TOOLBAR (Appears ONLY when project is active)  */}
+      {/* TIER 2A: EDITORIAL DEVELOPMENT WORKSPACE TOOLBAR                          */}
+      {/* ========================================================================= */}
+      {currentView === 'editorial_development' && activeProject && (
+        <div className="bg-[#ede8dc] border-b border-[#ded7ca] px-3 sm:px-4 md:px-6 py-2 animate-in slide-in-from-top-1 duration-150">
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 lg:gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => onNavigate('dashboard', activeProject.type)}
+                className="text-xs font-semibold text-[#5c5447] hover:text-[#1e232a] inline-flex items-center gap-1 shrink-0 px-2 py-1 rounded hover:bg-[#e2dcce] transition-colors"
+                title={`Back to ${getBackLabel()}`}
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{getBackLabel()}</span>
+              </button>
+
+              <span className="text-[#c7bfaf] select-none shrink-0 hidden lg:inline">•</span>
+
+              <div className="px-2 lg:px-2.5 py-0.5 bg-white/80 border border-[#dcd6ca] rounded-md shadow-2xs shrink-0 select-none">
+                {getSaveIndicator()}
+              </div>
+
+              <button
+                type="button"
+                onClick={onManualSave}
+                disabled={isSavingInFlight}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0 select-none cursor-pointer disabled:opacity-50 ${
+                  saveStatus === 'unsaved' || saveStatus === 'cloud_save_failed'
+                    ? 'bg-[#1e232a] text-white hover:bg-[#2d3744] shadow-2xs'
+                    : 'bg-white/80 border border-[#dcd6ca] text-[#2b251d] hover:bg-white'
+                }`}
+                title="Save development progress and create version history entry (Ctrl/Cmd + S)"
+              >
+                <Save className={`w-3.5 h-3.5 ${saveStatus === 'unsaved' || saveStatus === 'cloud_save_failed' ? 'text-amber-300' : 'text-amber-800'}`} />
+                <span>Save</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden px-1">
+              <span className="text-[#c7bfaf] select-none shrink-0 hidden lg:inline">•</span>
+              <span className="px-2 py-0.5 rounded bg-amber-100/90 border border-amber-300/80 text-[10px] font-bold uppercase tracking-wider text-amber-950 shrink-0 hidden sm:inline-flex items-center gap-1">
+                <Compass className="w-3 h-3 text-amber-800" />
+                Editorial Development
+              </span>
+              <span
+                className="font-editorial text-sm font-bold text-[#1e232a] truncate min-w-0 flex-1"
+                title={activeProject.title || 'Untitled Draft'}
+              >
+                {activeProject.title || 'Untitled Draft'}
+              </span>
+            </div>
+
+            {onOpenArticleEditor && (
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onOpenArticleEditor}
+                  className="px-2.5 py-1 rounded-md text-xs font-semibold text-[#1e232a] bg-white/90 hover:bg-white border border-[#dcd6ca] transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Switch to the Article Writing & Editing Workspace"
+                >
+                  <FileText className="w-3.5 h-3.5 text-blue-800" />
+                  <span className="hidden sm:inline">Article Editor</span>
+                  <span className="sm:hidden">Editor</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TIER 2B: CONTEXTUAL PROJECT TOOLBAR (Appears ONLY in Article/Guide Editor)*/}
       {/* ========================================================================= */}
       {currentView === 'workspace' && activeProject && (
         <div className="bg-[#ede8dc] border-b border-[#ded7ca] px-3 sm:px-4 md:px-6 py-2 animate-in slide-in-from-top-1 duration-150">
@@ -600,64 +684,64 @@ export const Navigation: React.FC<NavigationProps> = ({
                           Writing & Workflow
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                          {activeProject.type === 'article' && (
+                          {activeProject.type === 'article' && onOpenEditorialDevelopment && (
                             <button
                               type="button"
                               onClick={() => {
                                 setIsPanelsMenuOpen(false);
-                                handlePanelToggle('develop');
+                                onOpenEditorialDevelopment();
                               }}
-                              className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
-                                activePanel === 'develop'
-                                  ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
-                                  : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
-                              }`}
+                              className="col-span-2 p-2.5 rounded-xl border bg-amber-50/80 border-amber-300 text-[#1e232a] hover:bg-amber-100 text-left flex items-start gap-2 transition-colors"
                             >
-                              <Compass className={`w-4 h-4 shrink-0 ${activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'}`} />
+                              <Compass className="w-4 h-4 shrink-0 text-amber-800" />
                               <div>
-                                <div className="font-semibold">Develop</div>
-                                <div className={`text-[10px] ${activePanel === 'develop' ? 'text-amber-200' : 'text-[#736c61]'}`}>5 Angles & Brief</div>
+                                <div className="font-semibold">Editorial Development Workspace</div>
+                                <div className="text-[10px] text-[#736c61]">Idea, 5 Angles, Brief, Outline & Prompt</div>
                               </div>
                             </button>
                           )}
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsPanelsMenuOpen(false);
-                              handlePanelToggle('outline');
-                            }}
-                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
-                              activePanel === 'outline'
-                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
-                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
-                            }`}
-                          >
-                            <ListOrdered className={`w-4 h-4 shrink-0 ${activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'}`} />
-                            <div>
-                              <div className="font-semibold">Outline</div>
-                              <div className={`text-[10px] ${activePanel === 'outline' ? 'text-blue-200' : 'text-[#736c61]'}`}>Content steps</div>
-                            </div>
-                          </button>
+                          {activeProject.type !== 'article' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsPanelsMenuOpen(false);
+                                  handlePanelToggle('outline');
+                                }}
+                                className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                                  activePanel === 'outline'
+                                    ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                    : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                                }`}
+                              >
+                                <ListOrdered className={`w-4 h-4 shrink-0 ${activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'}`} />
+                                <div>
+                                  <div className="font-semibold">Outline</div>
+                                  <div className={`text-[10px] ${activePanel === 'outline' ? 'text-blue-200' : 'text-[#736c61]'}`}>Content steps</div>
+                                </div>
+                              </button>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsPanelsMenuOpen(false);
-                              handlePanelToggle('draft_package');
-                            }}
-                            className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
-                              activePanel === 'draft_package'
-                                ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
-                                : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
-                            }`}
-                          >
-                            <Sparkles className={`w-4 h-4 shrink-0 ${activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'}`} />
-                            <div>
-                              <div className="font-semibold">Draft Package</div>
-                              <div className={`text-[10px] ${activePanel === 'draft_package' ? 'text-amber-200' : 'text-[#736c61]'}`}>Export to LLM</div>
-                            </div>
-                          </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsPanelsMenuOpen(false);
+                                  handlePanelToggle('draft_package');
+                                }}
+                                className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition-colors ${
+                                  activePanel === 'draft_package'
+                                    ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
+                                    : 'bg-white border-[#dcd6ca] text-[#2b251d] hover:bg-[#f6f3eb]'
+                                }`}
+                              >
+                                <Sparkles className={`w-4 h-4 shrink-0 ${activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'}`} />
+                                <div>
+                                  <div className="font-semibold">Draft Package</div>
+                                  <div className={`text-[10px] ${activePanel === 'draft_package' ? 'text-amber-200' : 'text-[#736c61]'}`}>Export to LLM</div>
+                                </div>
+                              </button>
+                            </>
+                          )}
 
                           <button
                             type="button"
@@ -927,27 +1011,6 @@ export const Navigation: React.FC<NavigationProps> = ({
             <div className="flex items-center gap-2 shrink-0">
               <div className="flex items-center gap-0.5 lg:gap-1 bg-white/60 p-0.5 rounded-lg border border-[#dcd6ca] text-xs font-medium text-[#4a443b]">
                 {/* Secondary items inline only on wide desktop (2xl+); moved into More dropdown on narrower desktop/laptop */}
-                {/* Develop (Articles only) */}
-                {activeProject.type === 'article' && (
-                  <button
-                    type="button"
-                    onClick={() => handlePanelToggle('develop')}
-                    className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
-                      activePanel === 'develop'
-                        ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                        : 'hover:bg-white hover:text-[#1e232a]'
-                    }`}
-                    title="Develop Article: Idea → 5 Angles → Direction → Brief"
-                  >
-                    <Compass
-                      className={`w-3.5 h-3.5 ${
-                        activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'
-                      }`}
-                    />
-                    <span>Develop</span>
-                  </button>
-                )}
-
                 {/* Brief */}
                 <button
                   type="button"
@@ -967,43 +1030,46 @@ export const Navigation: React.FC<NavigationProps> = ({
                   <span>Brief</span>
                 </button>
 
-                {/* Outline */}
-                <button
-                  type="button"
-                  onClick={() => handlePanelToggle('outline')}
-                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
-                    activePanel === 'outline'
-                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                      : 'hover:bg-white hover:text-[#1e232a]'
-                  }`}
-                  title="Content Outline"
-                >
-                  <ListOrdered
-                    className={`w-3.5 h-3.5 ${
-                      activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'
-                    }`}
-                  />
-                  <span>Outline</span>
-                </button>
+                {/* Non-article projects keep Outline & Draft Package inline on 2xl+; Article projects use the dedicated Editorial Development Workspace */}
+                {activeProject.type !== 'article' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handlePanelToggle('outline')}
+                      className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
+                        activePanel === 'outline'
+                          ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
+                          : 'hover:bg-white hover:text-[#1e232a]'
+                      }`}
+                      title="Content Outline"
+                    >
+                      <ListOrdered
+                        className={`w-3.5 h-3.5 ${
+                          activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'
+                        }`}
+                      />
+                      <span>Outline</span>
+                    </button>
 
-                {/* Draft Package (ChatGPT Handoff) */}
-                <button
-                  type="button"
-                  onClick={() => handlePanelToggle('draft_package')}
-                  className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
-                    activePanel === 'draft_package'
-                      ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
-                      : 'hover:bg-white hover:text-[#1e232a]'
-                  }`}
-                  title="Editorial Draft Package: Handoff brief, outline progression, research & style to ChatGPT"
-                >
-                  <Sparkles
-                    className={`w-3.5 h-3.5 ${
-                      activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'
-                    }`}
-                  />
-                  <span>Draft Package</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePanelToggle('draft_package')}
+                      className={`hidden 2xl:inline-flex px-2.5 py-1 rounded-md transition-colors items-center gap-1 select-none cursor-pointer ${
+                        activePanel === 'draft_package'
+                          ? 'bg-[#1e232a] text-white shadow-2xs font-semibold'
+                          : 'hover:bg-white hover:text-[#1e232a]'
+                      }`}
+                      title="Editorial Draft Package"
+                    >
+                      <Sparkles
+                        className={`w-3.5 h-3.5 ${
+                          activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'
+                        }`}
+                      />
+                      <span>Draft Package</span>
+                    </button>
+                  </>
+                )}
 
                 {/* Controls */}
                 <button
@@ -1214,7 +1280,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                             ? 'bg-white text-[#1e232a] shadow-2xs font-semibold'
                             : 'hover:bg-white hover:text-[#1e232a]'
                         }`}
-                        title="More studio sections (Develop, Brief, Outline, Draft Package, Controls, Rules, Instructions, History)"
+                        title="More studio sections (Editorial Development, Brief, Controls, Rules, Instructions, History)"
                       >
                         <MoreHorizontal
                           className={`w-3.5 h-3.5 ${
@@ -1234,37 +1300,29 @@ export const Navigation: React.FC<NavigationProps> = ({
                   {isMoreMenuOpen && (
                     <div
                       role="menu"
-                      className="absolute right-0 mt-1.5 w-60 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto"
+                      className="absolute right-0 mt-1.5 w-64 max-w-[calc(100vw-2rem)] bg-white border border-[#dcd6ca] rounded-xl shadow-xl py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100 max-h-[80vh] overflow-y-auto"
                     >
                       <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8a8275] border-b border-[#f0ede6] mb-1">
                         Studio Sections
                       </div>
 
-                      {activeProject.type === 'article' && (
+                      {activeProject.type === 'article' && onOpenEditorialDevelopment && (
                         <button
                           type="button"
                           role="menuitem"
                           onClick={() => {
                             setIsMoreMenuOpen(false);
-                            handlePanelToggle('develop');
+                            onOpenEditorialDevelopment();
                           }}
-                          className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                            activePanel === 'develop'
-                              ? 'bg-[#1e232a] text-white font-semibold'
-                              : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                          }`}
+                          className="w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer text-[#1e232a] bg-amber-50/60 hover:bg-amber-100/80 border-b border-[#f0ede6] mb-1"
                         >
                           <div className="flex items-center gap-2">
-                            <Compass
-                              className={`w-3.5 h-3.5 shrink-0 ${
-                                activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'
-                              }`}
-                            />
-                            <span>Develop</span>
+                            <Compass className="w-3.5 h-3.5 shrink-0 text-amber-800" />
+                            <div>
+                              <div className="font-semibold">Editorial Development</div>
+                              <div className="text-[10px] text-[#736c61]">Angles, Brief, Outline & Prompt</div>
+                            </div>
                           </div>
-                          {activePanel === 'develop' && (
-                            <span className="text-[10px] text-amber-200 font-medium">Active</span>
-                          )}
                         </button>
                       )}
 
@@ -1294,65 +1352,69 @@ export const Navigation: React.FC<NavigationProps> = ({
                         )}
                       </button>
 
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setIsMoreMenuOpen(false);
-                          handlePanelToggle('outline');
-                        }}
-                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                          activePanel === 'outline'
-                            ? 'bg-[#1e232a] text-white font-semibold'
-                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <ListOrdered
-                            className={`w-3.5 h-3.5 shrink-0 ${
-                              activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'
-                            }`}
-                          />
-                          <span>Outline</span>
-                        </div>
-                        {activeProject.outline && activeProject.outline.length > 0 && (
-                          <span
-                            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                      {activeProject.type !== 'article' && (
+                        <>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              handlePanelToggle('outline');
+                            }}
+                            className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
                               activePanel === 'outline'
-                                ? 'bg-blue-800 text-blue-100'
-                                : 'bg-blue-50 text-blue-900 border border-blue-200'
+                                ? 'bg-[#1e232a] text-white font-semibold'
+                                : 'text-[#2b251d] hover:bg-[#f6f3eb]'
                             }`}
                           >
-                            {activeProject.outline.length}
-                          </span>
-                        )}
-                      </button>
+                            <div className="flex items-center gap-2">
+                              <ListOrdered
+                                className={`w-3.5 h-3.5 shrink-0 ${
+                                  activePanel === 'outline' ? 'text-blue-300' : 'text-blue-800'
+                                }`}
+                              />
+                              <span>Outline</span>
+                            </div>
+                            {activeProject.outline && activeProject.outline.length > 0 && (
+                              <span
+                                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                                  activePanel === 'outline'
+                                    ? 'bg-blue-800 text-blue-100'
+                                    : 'bg-blue-50 text-blue-900 border border-blue-200'
+                                }`}
+                              >
+                                {activeProject.outline.length}
+                              </span>
+                            )}
+                          </button>
 
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setIsMoreMenuOpen(false);
-                          handlePanelToggle('draft_package');
-                        }}
-                        className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                          activePanel === 'draft_package'
-                            ? 'bg-[#1e232a] text-white font-semibold'
-                            : 'text-[#2b251d] hover:bg-[#f6f3eb]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Sparkles
-                            className={`w-3.5 h-3.5 shrink-0 ${
-                              activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              handlePanelToggle('draft_package');
+                            }}
+                            className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                              activePanel === 'draft_package'
+                                ? 'bg-[#1e232a] text-white font-semibold'
+                                : 'text-[#2b251d] hover:bg-[#f6f3eb]'
                             }`}
-                          />
-                          <span>Draft Package</span>
-                        </div>
-                        {activePanel === 'draft_package' && (
-                          <span className="text-[10px] text-amber-200 font-medium">Active</span>
-                        )}
-                      </button>
+                          >
+                            <div className="flex items-center gap-2">
+                              <Sparkles
+                                className={`w-3.5 h-3.5 shrink-0 ${
+                                  activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'
+                                }`}
+                              />
+                              <span>Draft Package</span>
+                            </div>
+                            {activePanel === 'draft_package' && (
+                              <span className="text-[10px] text-amber-200 font-medium">Active</span>
+                            )}
+                          </button>
+                        </>
+                      )}
 
                       <div className="border-t border-[#f0ede6] my-1"></div>
 

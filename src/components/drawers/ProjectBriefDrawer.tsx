@@ -103,14 +103,14 @@ export const ProjectBriefDrawer: React.FC<ProjectBriefDrawerProps> = ({
       {onOpenDevelop && (
         <div className="px-5 py-2 bg-amber-50/70 border-b border-amber-200/60 flex items-center justify-between gap-2 text-xs min-w-0">
           <span className="text-amber-950 min-w-0 flex-1 break-words">
-            Developing from an idea? Explore 5 angles and synthesize this brief.
+            Developing from an idea? Explore 5 angles, brief, outline, and prompt.
           </span>
           <button
             type="button"
             onClick={onOpenDevelop}
             className="text-[11px] font-bold text-amber-900 hover:text-amber-950 underline shrink-0 cursor-pointer"
           >
-            Open Develop →
+            Editorial Development →
           </button>
         </div>
       )}

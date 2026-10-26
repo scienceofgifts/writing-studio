@@ -66,6 +66,9 @@ interface ContentOutlineDrawerProps {
   onDraftSection?: (section: OutlineItem) => void;
   onOpenDevelop?: () => void;
   onOpenDraftPackage?: () => void;
+  onOpenArticleEditor?: () => void;
+  onReturnToArticles?: () => void;
+  variant?: 'drawer' | 'workspace';
 }
 
 export const ContentOutlineDrawer: React.FC<ContentOutlineDrawerProps> = ({
@@ -78,6 +81,9 @@ export const ContentOutlineDrawer: React.FC<ContentOutlineDrawerProps> = ({
   onDraftSection,
   onOpenDevelop,
   onOpenDraftPackage,
+  onOpenArticleEditor,
+  onReturnToArticles,
+  variant = 'drawer',
 }) => {
   // Current structure type (default to essay for editorial articles)
   const [structureType, setStructureType] = useState<OutlineStructureType>(
@@ -380,9 +386,16 @@ export const ContentOutlineDrawer: React.FC<ContentOutlineDrawerProps> = ({
   };
 
   const currentList = proposedOutline ? proposedOutline.items : outline;
+  const isWorkspaceMode = variant === 'workspace';
 
   return (
-    <div className="max-md:fixed max-md:inset-0 max-md:z-50 max-md:w-full w-full md:w-[520px] lg:w-[580px] xl:w-[660px] md:max-w-[50vw] min-w-0 flex-shrink h-full bg-[#faf9f6] md:border-l border-[#dcd6ca] flex flex-col overflow-hidden animate-in slide-in-from-right-1 duration-150 z-30 select-none shadow-xl">
+    <div
+      className={
+        isWorkspaceMode
+          ? 'w-full max-w-5xl mx-auto min-w-0 flex-1 bg-white border border-[#e5dfd3] rounded-2xl shadow-xs flex flex-col overflow-hidden select-none'
+          : 'max-md:fixed max-md:inset-0 max-md:z-50 max-md:w-full w-full md:w-[520px] lg:w-[580px] xl:w-[660px] md:max-w-[50vw] min-w-0 flex-shrink h-full bg-[#faf9f6] md:border-l border-[#dcd6ca] flex flex-col overflow-hidden animate-in slide-in-from-right-1 duration-150 z-30 select-none shadow-xl'
+      }
+    >
       {/* 1. Header */}
       <div className="p-4 sm:p-5 border-b border-[#e5dfd3] bg-[#f5f2ea] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -409,7 +422,9 @@ export const ContentOutlineDrawer: React.FC<ContentOutlineDrawerProps> = ({
             <button
               type="button"
               onClick={() => {
-                onClose();
+                if (!isWorkspaceMode) {
+                  onClose();
+                }
                 onOpenDraftPackage();
               }}
               className="px-3 py-1.5 text-xs font-bold text-white bg-[#1e232a] hover:bg-[#2d3744] rounded-lg transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
@@ -421,14 +436,16 @@ export const ContentOutlineDrawer: React.FC<ContentOutlineDrawerProps> = ({
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-[#736c61] hover:text-[#2d333b] rounded-lg hover:bg-[#e8e2d5] transition-colors shrink-0 cursor-pointer"
-            title="Close Outline Studio"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {!isWorkspaceMode && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center text-[#736c61] hover:text-[#2d333b] rounded-lg hover:bg-[#e8e2d5] transition-colors shrink-0 cursor-pointer"
+              title="Close Outline Studio"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1250,28 +1267,43 @@ export const ContentOutlineDrawer: React.FC<ContentOutlineDrawerProps> = ({
             </button>
           )}
 
-          {outline.length > 0 && onOpenDraftPackage && (
+          {outline.length > 0 && (onOpenDraftPackage || onOpenArticleEditor || onReturnToArticles) && (
             <div className="mt-4 p-4 rounded-xl border border-amber-300 bg-amber-50/80 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-2xs">
               <div className="space-y-0.5 text-center sm:text-left">
                 <div className="text-xs font-bold text-[#1e232a] flex items-center justify-center sm:justify-start gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Next Step: Editorial Draft Package</span>
+                  <span>Outline Progression Ready ({outline.length} steps)</span>
                 </div>
                 <div className="text-[11px] text-[#6e685f]">
-                  Assemble this {outline.length}-step outline, research, links, and style profile for ChatGPT.
+                  Assemble the external-model Draft Package prompt or move to the Article Editor.
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onOpenDraftPackage();
-                }}
-                className="w-full sm:w-auto px-4 py-2 bg-[#1e232a] hover:bg-[#2d3744] text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs shrink-0"
-              >
-                <span>Proceed to Draft Package</span>
-                <ArrowRight className="w-3.5 h-3.5 text-amber-300" />
-              </button>
+              <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 w-full sm:w-auto shrink-0">
+                {onOpenArticleEditor && (
+                  <button
+                    type="button"
+                    onClick={onOpenArticleEditor}
+                    className="px-3.5 py-2 bg-white hover:bg-[#ede8dc] text-[#1e232a] border border-[#dcd6ca] text-xs font-semibold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <span>Open Article Editor</span>
+                  </button>
+                )}
+                {onOpenDraftPackage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isWorkspaceMode) {
+                        onClose();
+                      }
+                      onOpenDraftPackage();
+                    }}
+                    className="px-4 py-2 bg-[#1e232a] hover:bg-[#2d3744] text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <span>Proceed to Draft Package</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-amber-300" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

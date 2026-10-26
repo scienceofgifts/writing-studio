@@ -59,6 +59,7 @@ interface ArticleWorkspaceProps {
   onRequestProposal: (proposal: DiffProposal) => void;
   activePanel?: ActivePanel;
   onTogglePanel?: (panel: Exclude<ActivePanel, null>) => void;
+  onOpenEditorialDevelopment?: () => void;
   onOpenBrief?: () => void;
   onOpenOutline?: () => void;
   onOpenDraftPackage?: () => void;
@@ -74,6 +75,7 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
   onRequestProposal,
   activePanel = null,
   onTogglePanel,
+  onOpenEditorialDevelopment,
   onOpenBrief,
   onOpenOutline,
   onOpenDraftPackage,
@@ -363,57 +365,26 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
                     type="button"
                     onClick={() => {
                       setIsActionsMenuOpen(false);
-                      onTogglePanel?.('develop');
+                      if (onOpenEditorialDevelopment) {
+                        onOpenEditorialDevelopment();
+                      } else {
+                        onTogglePanel?.('develop');
+                      }
                     }}
                     className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
                   >
                     <div className="flex items-center gap-2">
                       <Compass className="w-4 h-4 text-amber-800 shrink-0" />
-                      <span className="font-semibold">Develop Article</span>
+                      <div>
+                        <div className="font-semibold">Editorial Development</div>
+                        <div className="text-[10px] text-[#736c61]">Angles, Brief, Outline & Prompt</div>
+                      </div>
                     </div>
                     {project.editorialDevelopment?.status && (
                       <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-amber-100 text-amber-900">
                         {project.editorialDevelopment.status}
                       </span>
                     )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsActionsMenuOpen(false);
-                      if (onOpenOutline) onOpenOutline();
-                      else onTogglePanel?.('outline');
-                    }}
-                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <ListOrdered className="w-4 h-4 text-blue-700 shrink-0" />
-                      <span className="font-semibold">Outline Studio</span>
-                    </div>
-                    {project.outline && project.outline.length > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-blue-100 text-blue-900">
-                        {project.outline.length} steps
-                      </span>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsActionsMenuOpen(false);
-                      if (onOpenDraftPackage) onOpenDraftPackage();
-                      else onTogglePanel?.('draft_package');
-                    }}
-                    className="w-full px-3 py-2 text-left hover:bg-[#f6f3eb] flex items-center justify-between text-[#1e232a] cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-emerald-700 shrink-0" />
-                      <span className="font-semibold">Draft Package</span>
-                    </div>
-                    <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase bg-emerald-100 text-emerald-900">
-                      ChatGPT
-                    </span>
                   </button>
 
                   <button
@@ -606,79 +577,17 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
 
             {/* Desktop Studio Buttons (Visible >= 2xl) */}
             <div className="hidden 2xl:flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => onTogglePanel?.('develop')}
-                className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer ${
-                  activePanel === 'develop'
-                    ? 'bg-[#1e232a] text-white border-[#1e232a]'
-                    : 'text-[#1e232a] bg-amber-50/80 border-amber-300 hover:bg-amber-100'
-                }`}
-                title="Develop Article: Idea → 5 Angles → Editorial Direction → Brief"
-              >
-                <Compass className={`w-3.5 h-3.5 ${activePanel === 'develop' ? 'text-amber-300' : 'text-amber-800'}`} />
-                <span>Develop Article</span>
-                {project.editorialDevelopment?.status && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                      activePanel === 'develop'
-                        ? 'bg-amber-800 text-amber-100'
-                        : 'bg-white text-amber-950 border border-amber-300'
-                    }`}
-                  >
-                    {project.editorialDevelopment.status === 'draft_package_ready'
-                      ? 'Package Ready'
-                      : project.editorialDevelopment.status === 'outline_ready'
-                      ? 'Outline Ready'
-                      : project.editorialDevelopment.status === 'brief_ready'
-                      ? 'Brief Ready'
-                      : project.editorialDevelopment.status === 'direction_set'
-                      ? 'Direction'
-                      : project.editorialDevelopment.status === 'angles_generated'
-                      ? 'Angles'
-                      : 'Idea'}
-                  </span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => (onOpenOutline ? onOpenOutline() : onTogglePanel?.('outline'))}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer ${
-                  activePanel === 'outline'
-                    ? 'bg-[#1e232a] text-white border-[#1e232a]'
-                    : 'text-[#1e232a] bg-blue-50/80 border-blue-200 hover:bg-blue-100'
-                }`}
-                title="Content Outline Studio"
-              >
-                <ListOrdered className={`w-3.5 h-3.5 ${activePanel === 'outline' ? 'text-blue-300' : 'text-blue-700'}`} />
-                <span>Outline</span>
-                {project.outline && project.outline.length > 0 && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                      activePanel === 'outline'
-                        ? 'bg-blue-800 text-blue-100'
-                        : 'bg-white text-blue-900 border border-blue-200'
-                    }`}
-                  >
-                    {project.outline.length}
-                  </span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => (onOpenDraftPackage ? onOpenDraftPackage() : onTogglePanel?.('draft_package'))}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer ${
-                  activePanel === 'draft_package'
-                    ? 'bg-[#1e232a] text-white border-[#1e232a]'
-                    : 'text-[#1e232a] bg-emerald-50/80 border-emerald-300 hover:bg-emerald-100'
-                }`}
-                title="Editorial Draft Package"
-              >
-                <Sparkles className={`w-3.5 h-3.5 ${activePanel === 'draft_package' ? 'text-amber-300' : 'text-emerald-700'}`} />
-                <span>Draft Package</span>
-              </button>
+              {onOpenEditorialDevelopment && (
+                <button
+                  type="button"
+                  onClick={onOpenEditorialDevelopment}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border text-[#1e232a] bg-amber-50/80 border-amber-300 hover:bg-amber-100 transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Open Editorial Development Workspace (Idea → 5 Angles → Direction → Brief → Outline → Prompt)"
+                >
+                  <Compass className="w-3.5 h-3.5 text-amber-800" />
+                  <span>Editorial Development</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -688,29 +597,6 @@ export const ArticleWorkspace: React.FC<ArticleWorkspaceProps> = ({
               >
                 <Sliders className="w-3.5 h-3.5 text-amber-800" />
                 <span>Info</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onTogglePanel?.('research')}
-                className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer ${
-                  activePanel === 'research'
-                    ? 'bg-[#1e232a] text-white border-[#1e232a]'
-                    : 'text-[#4a443b] bg-white border-[#dcd6ca] hover:bg-[#ede8dc]'
-                }`}
-                title="Research Studies & Claims"
-              >
-                <BookOpen className={`w-3.5 h-3.5 ${activePanel === 'research' ? 'text-amber-300' : 'text-amber-800'}`} />
-                <span>Research</span>
-                {project.attachedStudyIds && project.attachedStudyIds.length > 0 && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                      activePanel === 'research' ? 'bg-amber-800 text-amber-100' : 'bg-amber-100 text-amber-900 border border-amber-300'
-                    }`}
-                  >
-                    {project.attachedStudyIds.length}
-                  </span>
-                )}
               </button>
 
               <button

@@ -10,10 +10,15 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   determineInitialDevelopmentStep,
+  determineInitialWorkspaceStage,
+  getCompletedWorkspaceStages,
+  getNextAvailableWorkspaceAction,
+  findExistingProjectForIdea,
   applyAngleRoleAssignment,
   validateBriefGenerationInputs,
   validateAndNormalizeEditorialBrief,
   WorkflowStep,
+  DevelopmentWorkspaceStage,
 } from '../editorialDevelopmentUtils';
 import {
   WritingProject,
@@ -805,4 +810,266 @@ describe('3. Regression protection: manual save, version history, and project in
     );
   });
 });
+
+describe('4. Stage 2: Dedicated Editorial Development Workspace & Separation from Article Editor', () => {
+  it('determines initial workspace stage, completed stages, and next available action across all 6 stages', () => {
+    const baseProject = createSampleProject();
+
+    // 1. Fresh idea project (no angles yet) -> starts at 'idea'
+    const ideaOnlyProject: WritingProject = {
+      ...baseProject,
+      outline: [],
+      editorialDevelopment: {
+        originalIdea: baseProject.editorialDevelopment!.originalIdea,
+        angles: [],
+        direction: {
+          briefMentionAngleIds: [],
+          doNotUseAngleIds: [],
+          editorsDirection: '',
+        },
+        status: 'idea',
+      },
+    };
+    assert.equal(determineInitialWorkspaceStage(ideaOnlyProject), 'idea');
+    assert.deepEqual(getCompletedWorkspaceStages(ideaOnlyProject), []);
+    assert.deepEqual(getNextAvailableWorkspaceAction(ideaOnlyProject, 'idea'), {
+      label: 'Generate 5 Angles',
+      targetStage: 'angles',
+    });
+
+    // 2. Angles generated -> starts at 'angles'
+    const anglesProject: WritingProject = {
+      ...baseProject,
+      outline: [],
+    };
+    assert.equal(determineInitialWorkspaceStage(anglesProject), 'angles');
+    assert.deepEqual(getCompletedWorkspaceStages(anglesProject), ['idea', 'angles']);
+    assert.deepEqual(getNextAvailableWorkspaceAction(anglesProject, 'angles'), {
+      label: 'Proceed to Editorial Direction',
+      targetStage: 'direction',
+    });
+
+    // 3. Direction set -> starts at 'direction'
+    const roleAssigned = applyAngleRoleAssignment(
+      anglesProject.editorialDevelopment!,
+      'angle-1',
+      'primary',
+      'Focus on carbon steel maintenance.'
+    );
+    const directionProject: WritingProject = {
+      ...anglesProject,
+      editorialDevelopment: {
+        ...anglesProject.editorialDevelopment!,
+        angles: roleAssigned.angles,
+        direction: roleAssigned.direction,
+        status: 'direction_set',
+      },
+    };
+    assert.equal(determineInitialWorkspaceStage(directionProject), 'direction');
+    assert.deepEqual(getCompletedWorkspaceStages(directionProject), [
+      'idea',
+      'angles',
+      'direction',
+    ]);
+    assert.deepEqual(getNextAvailableWorkspaceAction(directionProject, 'direction'), {
+      label: 'Synthesize Editorial Brief',
+      targetStage: 'brief',
+    });
+
+    // 4. Brief ready -> starts at 'brief'
+    const briefProject: WritingProject = {
+      ...directionProject,
+      editorialDevelopment: {
+        ...directionProject.editorialDevelopment!,
+        status: 'brief_ready',
+        brief: {
+          workingTitle: 'The Patina of Daily Utility',
+          topic: 'Heirloom Tools',
+          audience: 'Discerning gifters',
+          searchIntent: 'Cultural insight',
+          primaryAngle: 'Tools that age visibly record shared domestic history.',
+          secondaryFocus: '',
+          briefMentions: [],
+          thingsToAvoid: [],
+          centralArgument: 'Maintenance builds lasting attachment.',
+          keyQuestions: ['Why do tactile materials age better?'],
+          editorialDirection: 'Warm, observant editorial prose.',
+          suggestedTakeaway: 'Select repairable materials.',
+          factualContext: [],
+          editorialInterpretation: [],
+          internalLinkOpportunities: [],
+          references: [],
+          generatedAt: '2026-01-10T10:05:00.000Z',
+          updatedAt: '2026-01-10T10:05:00.000Z',
+        },
+      },
+    };
+    assert.equal(determineInitialWorkspaceStage(briefProject), 'brief');
+    assert.deepEqual(getCompletedWorkspaceStages(briefProject), [
+      'idea',
+      'angles',
+      'direction',
+      'brief',
+    ]);
+    assert.deepEqual(getNextAvailableWorkspaceAction(briefProject, 'brief'), {
+      label: 'Proceed to Outline Studio',
+      targetStage: 'outline',
+    });
+
+    // 5. Outline ready -> starts at 'outline'
+    const outlineProject: WritingProject = {
+      ...briefProject,
+      outline: baseProject.outline,
+      editorialDevelopment: {
+        ...briefProject.editorialDevelopment!,
+        status: 'outline_ready',
+      },
+    };
+    assert.equal(determineInitialWorkspaceStage(outlineProject), 'outline');
+    assert.deepEqual(getCompletedWorkspaceStages(outlineProject), [
+      'idea',
+      'angles',
+      'direction',
+      'brief',
+      'outline',
+    ]);
+    assert.deepEqual(getNextAvailableWorkspaceAction(outlineProject, 'outline'), {
+      label: 'Assemble Draft Package & Prompt',
+      targetStage: 'draft_package',
+    });
+
+    // 6. Draft package ready -> starts at 'draft_package'
+    const packageProject: WritingProject = {
+      ...outlineProject,
+      editorialDevelopment: {
+        ...outlineProject.editorialDevelopment!,
+        status: 'draft_package_ready',
+      },
+    };
+    assert.equal(determineInitialWorkspaceStage(packageProject), 'draft_package');
+    assert.deepEqual(getCompletedWorkspaceStages(packageProject), [
+      'idea',
+      'angles',
+      'direction',
+      'brief',
+      'outline',
+      'draft_package',
+    ]);
+    assert.deepEqual(getNextAvailableWorkspaceAction(packageProject, 'draft_package'), {
+      label: 'Open Article Editor',
+      targetStage: 'article_editor',
+    });
+  });
+
+  it('reopens existing development work for an idea without duplicating the project or resetting progress', () => {
+    const existingProject = createSampleProject();
+    existingProject.originatingIdeaId = 'idea-1';
+    existingProject.editorialDevelopment!.status = 'direction_set';
+
+    const idea = {
+      id: 'idea-1',
+      title: 'Heirloom Kitchen Tools and Tactile Permanence',
+      angle: 'Why objects that demand care outlast frictionless alternatives.',
+      whyInteresting: 'Reframes maintenance as emotional investment.',
+      searchIntent: 'Cultural & material insight',
+    };
+
+    // Match by originatingIdeaId / originalIdea.id
+    const matchedById = findExistingProjectForIdea([existingProject], idea);
+    assert.ok(matchedById);
+    assert.equal(matchedById.id, existingProject.id);
+    assert.equal(determineInitialWorkspaceStage(matchedById), 'direction');
+
+    // Match by normalized title + angle even if idea ID was regenerated
+    const regeneratedIdeaSameConcept = {
+      ...idea,
+      id: 'idea-regenerated-99',
+    };
+    const matchedByConcept = findExistingProjectForIdea(
+      [{ ...existingProject, originatingIdeaId: undefined }],
+      regeneratedIdeaSameConcept
+    );
+    assert.ok(matchedByConcept);
+    assert.equal(matchedByConcept.id, existingProject.id);
+
+    // Does not match deleted projects or unrelated ideas
+    const unrelatedIdea = {
+      id: 'idea-unrelated',
+      title: 'Solid Brass Desk Accessories',
+      angle: 'How weight anchors a home study.',
+      whyInteresting: 'Explores tactile desk tools.',
+    };
+    assert.equal(findExistingProjectForIdea([existingProject], unrelatedIdea), undefined);
+    assert.equal(
+      findExistingProjectForIdea([{ ...existingProject, _isDeleted: true }], idea),
+      undefined
+    );
+  });
+
+  it('separates EditorialDevelopmentWorkspace from ArticleWorkspace while keeping intentional workspace transitions and preserving editor prose', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+
+    const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+    const workspaceSource = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        'src/components/workspaces/EditorialDevelopmentWorkspace.tsx'
+      ),
+      'utf8'
+    );
+    const navSource = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/components/Navigation.tsx'),
+      'utf8'
+    );
+    const draftPackageSource = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/components/drawers/DraftPackageDrawer.tsx'),
+      'utf8'
+    );
+
+    // 1. App.tsx routes handleUseIdea to 'editorial_development' and renders EditorialDevelopmentWorkspace
+    assert.equal(
+      appSource.includes("setCurrentView('editorial_development')"),
+      true,
+      'App.tsx must open the dedicated editorial_development workspace when developing an idea'
+    );
+    assert.equal(
+      appSource.includes('<EditorialDevelopmentWorkspace'),
+      true,
+      'App.tsx must render the dedicated EditorialDevelopmentWorkspace component'
+    );
+
+    // 2. EditorialDevelopmentWorkspace reuses existing EditorialDevelopmentDrawer, ContentOutlineDrawer, and DraftPackageDrawer with variant="workspace"
+    assert.equal(
+      workspaceSource.includes('<EditorialDevelopmentDrawer') &&
+        workspaceSource.includes('<ContentOutlineDrawer') &&
+        workspaceSource.includes('<DraftPackageDrawer') &&
+        workspaceSource.includes('variant="workspace"'),
+      true,
+      'EditorialDevelopmentWorkspace must reuse the existing development, outline, and draft package implementations in workspace mode'
+    );
+
+    // 3. DraftPackageDrawer in workspace mode provides deliberate Return to Articles, Open Article Editor, and Copy Master ChatGPT Prompt actions without auto-inserting prompt into article content
+    assert.equal(
+      draftPackageSource.includes('Return to Articles') &&
+        draftPackageSource.includes('Open Article Editor') &&
+        draftPackageSource.includes('Copy Master ChatGPT Prompt'),
+      true,
+      'DraftPackageDrawer must provide deliberate completion actions to copy prompt, return to Articles, or open Article Editor'
+    );
+    assert.equal(
+      draftPackageSource.includes('project.content ='),
+      false,
+      'DraftPackageDrawer must never automatically insert the external-model prompt into article content'
+    );
+
+    // 4. Navigation.tsx keeps Article Editor toolbar uncluttered by removing inline Develop/Outline/Draft Package buttons for articles while providing a dedicated Tier 2 bar for Editorial Development
+    assert.equal(
+      navSource.includes("currentView === 'editorial_development'"),
+      true,
+      'Navigation.tsx must render a focused Tier 2 bar when in Editorial Development workspace'
+    );
+  });
+});
+
 
