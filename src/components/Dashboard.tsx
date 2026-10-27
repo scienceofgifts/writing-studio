@@ -30,6 +30,8 @@ import { storage } from '../services/storage';
 
 interface DashboardProps {
   projects: WritingProject[];
+  activeTab?: ProjectType | 'all';
+  onTabChange?: (tab: ProjectType | 'all') => void;
   onOpenProject: (id: string) => void;
   onOpenEditorialDevelopment?: (id: string) => void;
   onCreateProject: (type: ProjectType) => void;
@@ -42,6 +44,8 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({
   projects,
+  activeTab: controlledActiveTab,
+  onTabChange,
   onOpenProject,
   onOpenEditorialDevelopment,
   onCreateProject,
@@ -52,7 +56,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onOpenIdeaGenerator,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<ProjectType | 'all'>('all');
+  const [internalTab, setInternalTab] = useState<ProjectType | 'all'>('all');
+  const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalTab;
+
+  const handleTabSelect = (tab: ProjectType | 'all') => {
+    setInternalTab(tab);
+    onTabChange?.(tab);
+  };
+
   const [filterStatus, setFilterStatus] = useState<ProjectStatus | 'all'>('all');
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
@@ -165,6 +176,32 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const guideCount = projects.filter((p) => p.type === 'gift_guide').length;
   const productCount = projects.filter((p) => p.type === 'product_copy').length;
 
+  const getHeaderTitle = () => {
+    switch (activeTab) {
+      case 'article':
+        return 'Articles Library';
+      case 'gift_guide':
+        return 'Gift Guides Library';
+      case 'product_copy':
+        return 'Product Copies Library';
+      default:
+        return 'Editorial Studio Projects';
+    }
+  };
+
+  const getHeaderDescription = () => {
+    switch (activeTab) {
+      case 'article':
+        return 'Browse, draft, and refine in-depth editorial articles, investigative analyses, and essays.';
+      case 'gift_guide':
+        return 'Curate and edit high-intent gift guides, product recommendations, and recipient collections.';
+      case 'product_copy':
+        return 'Craft and review verified product copy proposals, creative angles, and buyer narratives.';
+      default:
+        return 'Discerning workspace for human, specific, unhurried articles, curated gift guides, and factual product narratives.';
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-[#faf9f6] p-4 sm:p-6 md:p-10 space-y-6 sm:space-y-8 max-w-6xl mx-auto w-full">
       {/* Studio Header Banner */}
@@ -176,10 +213,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <span>Science of Gifts Editorial Studio</span>
             </div>
             <h1 className="font-editorial text-2xl sm:text-3xl md:text-4xl font-bold text-[#1e232a] tracking-tight">
-              Editorial Studio Projects
+              {getHeaderTitle()}
             </h1>
             <p className="text-xs sm:text-sm text-[#6e685f] mt-1.5 sm:mt-2 max-w-2xl leading-relaxed">
-              Discerning workspace for human, specific, unhurried articles, curated gift guides, and factual product narratives.
+              {getHeaderDescription()}
             </p>
           </div>
 
@@ -243,7 +280,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="flex bg-[#f2efe6] p-0.5 rounded-lg overflow-x-auto max-w-full">
             <button
               type="button"
-              onClick={() => setActiveTab('all')}
+              onClick={() => handleTabSelect('all')}
               className={`px-3 py-1 rounded-md transition-colors ${
                 activeTab === 'all'
                   ? 'bg-white shadow-2xs font-semibold text-[#1e232a]'
@@ -254,7 +291,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('article')}
+              onClick={() => handleTabSelect('article')}
               className={`px-3 py-1 rounded-md transition-colors ${
                 activeTab === 'article'
                   ? 'bg-white shadow-2xs font-semibold text-[#1e232a]'
@@ -265,7 +302,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('gift_guide')}
+              onClick={() => handleTabSelect('gift_guide')}
               className={`px-3 py-1 rounded-md transition-colors ${
                 activeTab === 'gift_guide'
                   ? 'bg-white shadow-2xs font-semibold text-[#1e232a]'
@@ -276,7 +313,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('product_copy')}
+              onClick={() => handleTabSelect('product_copy')}
               className={`px-3 py-1 rounded-md transition-colors ${
                 activeTab === 'product_copy'
                   ? 'bg-white shadow-2xs font-semibold text-[#1e232a]'

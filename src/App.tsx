@@ -84,6 +84,7 @@ export default function App() {
   const [projects, setProjects] = useState<WritingProject[]>(() => storage.getProjects());
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => storage.getActiveProjectId());
   const [currentView, setCurrentView] = useState<AppView>('dashboard');
+  const [dashboardTab, setDashboardTab] = useState<ProjectType | 'all'>('all');
   const [activeResearchStudyId, setActiveResearchStudyId] = useState<string | null>(null);
   const [isFindOpen, setIsFindOpen] = useState(false);
 
@@ -1572,28 +1573,12 @@ export default function App() {
         }}
         activePanel={activePanel}
         onTogglePanel={handleTogglePanel}
+        dashboardTab={dashboardTab}
         onNavigate={(view, projectType) => {
           executeWithUnsavedGuard(() => {
             setActivePanel(null);
             if (view === 'dashboard') {
-              if (projectType) {
-                const existing = projectsRef.current.find((p) => p.type === projectType);
-                if (existing) {
-                  setActiveProjectId(existing.id);
-                  setCurrentView('workspace');
-                  return;
-                } else {
-                  const created = storage.createProject(projectType);
-                  savedBaselinesRef.current.set(created.id, created);
-                  const updatedList = storage.getProjects();
-                  setProjects(updatedList);
-                  projectsRef.current = updatedList;
-                  setActiveProjectId(created.id);
-                  setSaveStatus('saved_local');
-                  setCurrentView('workspace');
-                  return;
-                }
-              }
+              setDashboardTab(projectType || 'all');
               setCurrentView('dashboard');
             } else if (view === 'idea_generator') {
               setCurrentView('idea_generator');
@@ -1644,6 +1629,8 @@ export default function App() {
             {currentView === 'dashboard' && (
               <Dashboard
                 projects={projects}
+                activeTab={dashboardTab}
+                onTabChange={setDashboardTab}
                 onOpenProject={handleOpenProject}
                 onOpenEditorialDevelopment={handleOpenEditorialDevelopment}
                 onCreateProject={handleCreateProject}
@@ -1735,6 +1722,7 @@ export default function App() {
                 onReturnToArticles={() =>
                   executeWithUnsavedGuard(() => {
                     setActivePanel(null);
+                    setDashboardTab('article');
                     setCurrentView('dashboard');
                   })
                 }

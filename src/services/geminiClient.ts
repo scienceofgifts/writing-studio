@@ -37,6 +37,10 @@ import {
   validateBriefGenerationInputs,
   validateAndNormalizeEditorialBrief,
 } from '../utils/editorialDevelopmentUtils';
+import {
+  sanitizeProductMetadataForPrompt,
+  resolveProductCopyActionModel,
+} from '../utils/productCreativeDirectionUtils';
 import { assemblePrompt } from './promptAssembly';
 import { ModelId, AIActionType } from '../types/models';
 import { resolveEffectiveModelId, getModelDefinition } from './modelRegistry';
@@ -83,13 +87,28 @@ export const geminiService = {
       .filter((r) => r.enabled)
       .map((r) => r.rule);
 
-    const targetProduct = options.targetProduct || options.relevantProduct;
+    const rawTargetProduct = options.targetProduct || options.relevantProduct;
+    const sanitizedTargetProduct = rawTargetProduct
+      ? (sanitizeProductMetadataForPrompt(rawTargetProduct) as any) || undefined
+      : undefined;
 
-    const effectiveModel = resolveEffectiveModelId({
+    const baseEffectiveModel = resolveEffectiveModelId({
       actionOverride: options.modelOverride,
       projectOverride: project.modelOverride,
       globalDefault: storage.getGlobalModel(),
     });
+
+    const hasExplicitOverride = Boolean(options.modelOverride || project.modelOverride);
+    const effectiveModel = (
+      hasExplicitOverride
+        ? baseEffectiveModel
+        : resolveProductCopyActionModel({
+            requestedModel: baseEffectiveModel,
+            projectType: project.type,
+            action: String(action),
+            actionType: options.actionType,
+          })
+    ) as ModelId;
 
     const assembled = assemblePrompt({
       project,
@@ -98,8 +117,8 @@ export const geminiService = {
       scope: options.scope,
       customCommand: options.customCommand,
       targetOutlineItem: options.targetOutlineItem,
-      targetProduct,
-      relevantProduct: targetProduct,
+      targetProduct: sanitizedTargetProduct,
+      relevantProduct: sanitizedTargetProduct,
       globalInstructions,
     });
 
@@ -109,7 +128,7 @@ export const geminiService = {
     } else if (project.type === 'gift_guide') {
       metadata = project.giftGuideMeta || {};
     } else if (project.type === 'product_copy') {
-      metadata = project.productCopyMeta || {};
+      metadata = sanitizeProductMetadataForPrompt(project.productCopyMeta) || {};
     }
 
     let styleProfileInstructions: string[] = [];
@@ -147,7 +166,7 @@ export const geminiService = {
       styleProfileName,
       styleProfileInstructions,
       metadata,
-      relevantProduct: options.relevantProduct,
+      relevantProduct: sanitizedTargetProduct,
       targetOutlineItem: options.targetOutlineItem,
     };
 

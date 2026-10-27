@@ -4,12 +4,26 @@
  * Guarantees zero silent fallbacks and full error visibility.
  */
 
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { extractText } from 'unpdf';
 import {
   validateBriefGenerationInputs,
   validateAndNormalizeEditorialBrief,
 } from './src/utils/editorialDevelopmentUtils';
+import {
+  extractProductFactsFromHtml,
+  buildProductAnalysisPromptAndParts,
+  normalizeProductResearchOutput,
+  ExtractedUrlPageFacts,
+} from './src/utils/productResearchUtils';
+import {
+  sanitizeProductMetadataForPrompt,
+  resolveProductCopyActionModel,
+  normalizeEditorialActionProposedText,
+  buildCreativeDirectionPromptAndParts,
+  normalizeCreativeDirectionOutput,
+  CreativeDirectionRegenerateTarget,
+} from './src/utils/productCreativeDirectionUtils';
 
 export interface Env {
   GEMINI_API_KEY?: string;
@@ -27,6 +41,7 @@ const CORS_HEADERS = {
 };
 
 const VALID_MODELS = new Set([
+  'gemini-3-flash-preview',
   'gemini-3.8-flash',
   'gemini-3.7-flash',
   'gemini-3.6-flash',
@@ -35,9 +50,153 @@ const VALID_MODELS = new Set([
   'gemini-3.1-flash-lite',
 ]);
 
-function resolveModel(requested?: string, fallback = 'gemini-3.8-flash'): string {
-  if (requested && VALID_MODELS.has(requested)) return requested;
+const MODEL_FALLBACK_CHAIN = [
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.5-flash-lite',
+];
+
+const PER_MODEL_ATTEMPT_TIMEOUT_MS = 28000;
+const QUOTA_COOLDOWN_MS = 180000;
+const quotaExhaustedUntil = new Map<string, number>([
+  ['gemini-3.6-flash', Date.now() + 180000],
+  ['gemini-3.5-flash', Date.now() + 180000],
+  ['gemini-3.8-flash', Date.now() + 180000],
+  ['gemini-3.7-flash', Date.now() + 180000],
+]);
+
+function resolveModel(requested?: string, fallback = 'gemini-3-flash-preview'): string {
+  const now = Date.now();
+  if (
+    requested &&
+    VALID_MODELS.has(requested) &&
+    (quotaExhaustedUntil.get(requested) || 0) <= now
+  ) {
+    return requested;
+  }
   return fallback;
+}
+
+function isQuotaExhaustedError(err: any): boolean {
+  if (!err) return false;
+  const status = err.status || err.code || err?.error?.code;
+  if (status === 429) return true;
+  const msg = String(err.message || err || '').toLowerCase();
+  return (
+    msg.includes('429') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('exceeded your current quota')
+  );
+}
+
+function isTransientOverloadError(err: any): boolean {
+  if (!err) return false;
+  if (isQuotaExhaustedError(err)) return true;
+  const status = err.status || err.code || err?.error?.code;
+  if (status === 503 || status === 502 || status === 504) return true;
+  const msg = String(err.message || err || '').toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('504') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('deadline') ||
+    msg.includes('local_model_timeout') ||
+    msg.includes('try again later')
+  );
+}
+
+async function generateContentWithFallback(
+  ai: GoogleGenAI,
+  primaryModel: string,
+  params: {
+    contents: any;
+    config?: any;
+    timeoutMs?: number;
+  }
+): Promise<{ response: any; modelUsed: string }> {
+  const now = Date.now();
+  const effectivePrimary =
+    (quotaExhaustedUntil.get(primaryModel) || 0) > now
+      ? 'gemini-3-flash-preview'
+      : primaryModel;
+
+  const baseOrder = [
+    effectivePrimary,
+    ...MODEL_FALLBACK_CHAIN.filter((m) => m !== effectivePrimary),
+  ];
+
+  // Prioritize models that have not recently returned 429 quota exhaustion
+  const availableFirst = baseOrder.filter((m) => (quotaExhaustedUntil.get(m) || 0) <= now);
+  const coolingDown = baseOrder.filter((m) => (quotaExhaustedUntil.get(m) || 0) > now);
+  // Add a second retry pass on fast primary/fallback models to survive transient 1-second 503 spikes
+  const retryPass = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite'].filter(
+    (m) => (quotaExhaustedUntil.get(m) || 0) <= now
+  );
+  const candidateModels = [...availableFirst, ...retryPass, ...coolingDown];
+
+  const attemptTimeoutMs = params.timeoutMs || PER_MODEL_ATTEMPT_TIMEOUT_MS;
+  const effectiveConfig = params.config
+    ? {
+        ...params.config,
+        thinkingConfig: params.config.thinkingConfig ?? {
+          thinkingLevel: ThinkingLevel.MINIMAL,
+        },
+      }
+    : {
+        thinkingConfig: {
+          thinkingLevel: ThinkingLevel.MINIMAL,
+        },
+      };
+
+  let lastError: any = null;
+  for (let i = 0; i < candidateModels.length; i++) {
+    const candidate = candidateModels[i];
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const response = (await Promise.race([
+        ai.models.generateContent({
+          model: candidate,
+          contents: params.contents,
+          config: effectiveConfig,
+        }),
+        new Promise((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            const timeoutErr: any = new Error(
+              `LOCAL_MODEL_TIMEOUT: Model ${candidate} exceeded ${attemptTimeoutMs}ms attempt budget`
+            );
+            timeoutErr.status = 504;
+            reject(timeoutErr);
+          }, attemptTimeoutMs);
+        }),
+      ])) as any;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      quotaExhaustedUntil.delete(candidate);
+      return { response, modelUsed: candidate };
+    } catch (err: any) {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      lastError = err;
+      if (isQuotaExhaustedError(err)) {
+        quotaExhaustedUntil.set(candidate, Date.now() + QUOTA_COOLDOWN_MS);
+      }
+      if (!isTransientOverloadError(err) || i === candidateModels.length - 1) {
+        throw err;
+      }
+      console.info(
+        `[model-fallback] ${candidate} unavailable (${
+          err?.status || 'transient'
+        }); switching to ${candidateModels[i + 1]}`
+      );
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  throw lastError || new Error('All Gemini candidate models failed.');
 }
 
 function jsonResponse(data: any, status = 200): Response {
@@ -169,9 +328,10 @@ LAYER 1: HOUSE CONSTITUTION (INVIOLABLE STUDIO RULES)
 1. VOICE & CORE PHILOSOPHY:
    Human, specific, editorial, civilized, conversational, knowledgeable, and occasionally witty.
    Never clinical, never breathless, never promotional. Write as a discerning connoisseur friend.
-2. INVIOLABLE FACTUAL RESTRAINT:
-   Raw product specifications, materials, and historical notes are sacred source material.
-   NEVER invent dimensions, materials, origins, or fictitious historical anecdotes. If details are missing, omit them.
+2. INVIOLABLE FACTUAL RESTRAINT & MANUFACTURER ANTI-PARROTING:
+   Raw product specifications, materials, and historical notes are sacred source material for hard physical facts ONLY.
+   NEVER invent dimensions, materials, weights (GSM/oz), origins, or fictitious historical anecdotes. If details are missing, omit them.
+   NEVER copy, parrot, or lightly paraphrase vendor marketing prose, promotional superlatives, or generic e-commerce boilerplate from raw product notes.
 3. ABSOLUTELY FORBIDDEN CLICHÉS:
    Never use "Whether you're looking for...", "Perfect for...", "Ideal choice for...", "A thoughtful and meaningful gift...", "Something they'll cherish...", "In today's world...", "Takes it to the next level...", "Designed to...", "Must-have", "Game changer".
 4. PUNCTUATION DISCIPLINE:
@@ -244,8 +404,9 @@ ${cleanProjectInstructions}
   }
 
   if (relevantProduct) {
-    userPrompt += `\nRELEVANT PRODUCT SOURCE DATA (FACTUAL SOURCE - DO NOT INVENT):
-${JSON.stringify(relevantProduct, null, 2)}
+    const sanitizedProduct = sanitizeProductMetadataForPrompt(relevantProduct);
+    userPrompt += `\nRELEVANT PRODUCT SOURCE DATA (FACTUAL SOURCE ONLY - DO NOT INVENT SPECS OR PARROT VENDOR PHRASING):
+${JSON.stringify(sanitizedProduct, null, 2)}
 `;
   }
 
@@ -324,8 +485,12 @@ export async function handleApiRequest(
     }
   }
 
-  // Check GEMINI_API_KEY requirement for /api/gemini/* routes
-  if (pathname.startsWith('/api/gemini/')) {
+  // Check GEMINI_API_KEY requirement for Gemini-backed routes
+  if (
+    pathname.startsWith('/api/gemini/') ||
+    pathname === '/api/products/analyze-research' ||
+    pathname === '/api/products/generate-creative-direction'
+  ) {
     if (!env.GEMINI_API_KEY) {
       return jsonResponse(
         {
@@ -344,11 +509,17 @@ export async function handleApiRequest(
     // 2. POST /api/gemini/action
     if (pathname === '/api/gemini/action' && request.method === 'POST') {
       const ai = getAi();
-      const modelToUse = resolveModel(body.model || body.modelOverride, 'gemini-3.8-flash');
+      const requestedModel = resolveProductCopyActionModel({
+        requestedModel: body.model,
+        modelOverride: body.modelOverride,
+        projectType: body.projectType,
+        action: body.action,
+        actionType: body.actionType,
+        validModels: VALID_MODELS,
+      });
       const { systemInstruction, userPrompt } = buildEditorialPrompt(body);
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, requestedModel, {
         contents: userPrompt,
         config: {
           systemInstruction,
@@ -358,25 +529,19 @@ export async function handleApiRequest(
       });
 
       const text = response.text?.trim() || '';
-      let parsed: any = null;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        const match = text.match(/\{[\s\S]*\}/);
-        if (match) {
-          try { parsed = JSON.parse(match[0]); } catch {}
-        }
-      }
+      const parsed = parseModelJson(text);
+      const proposedText = normalizeEditorialActionProposedText(parsed);
 
-      if (!parsed || typeof parsed.proposedText !== 'string') {
+      if (!proposedText) {
         throw new Error('Model failed to generate structured editorial text proposal');
       }
 
       return jsonResponse({
         ok: true,
-        proposedText: parsed.proposedText,
-        explanation: parsed.explanation || 'Refined prose according to house editorial standards.',
-        modelUsed: modelToUse,
+        proposedText,
+        explanation:
+          parsed?.explanation || 'Refined prose according to house editorial standards.',
+        modelUsed,
       });
     }
 
@@ -398,8 +563,7 @@ export async function handleApiRequest(
       const systemInstruction = `You are senior editor and SEO linking strategist for "Science of Gifts". Analyze text and identify 2-5 high-value internal link opportunities from the library. Output JSON: { "opportunities": [{ "linkId", "linkTitle", "linkUrl", "destinationType", "targetPassage", "suggestedAnchor", "reason", "seoRationale", "previewText", "relevance" }], "rationale" }`;
       const userPrompt = `PROJECT: "${projectTitle}"\nDOC:\n"""\n${documentContent}\n"""\nLIBRARY:\n${JSON.stringify(activeLinks)}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.3 },
       });
@@ -429,7 +593,7 @@ export async function handleApiRequest(
         ok: true,
         opportunities: sanitized,
         rationale: parsed.rationale || 'Evaluated link opportunities.',
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -498,8 +662,7 @@ Output ONLY valid JSON matching:
 }`;
       const userPrompt = `ARTICLE TITLE: "${projectTitle}"\n\nARTICLE DOCUMENT:\n${documentContent}\n\nRESEARCH LIBRARY STUDIES:\n${JSON.stringify(studies)}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.1 },
       });
@@ -510,7 +673,7 @@ Output ONLY valid JSON matching:
         recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [],
         gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
         rationale: parsed.rationale || 'Completed evidence-first citation verification.',
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -562,8 +725,7 @@ ${String(documentContent).slice(0, 3500)}
 STUDY DATA (AUTHORITATIVE SOURCE — DO NOT INVENT BEYOND THIS):
 ${JSON.stringify(study, null, 2)}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.2 },
       });
@@ -582,7 +744,7 @@ ${JSON.stringify(study, null, 2)}`;
         explanation: parsed.explanation || '',
         targetSectionHeading: parsed.targetSectionHeading || targetSectionHeading,
         anchorPassageContext: parsed.anchorPassageContext || anchorPassageContext,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -600,8 +762,7 @@ ${JSON.stringify(study, null, 2)}`;
       const systemInstruction = `You are chief editorial reviewer for "Science of Gifts". Audit text for clichés, em dashes, repetition, clarity, unsupported claims. Return JSON: { "qualitativeSummary": "string", "findings": [{ "category", "severity", "location": { "type", "description" }, "originalText", "explanation", "suggestedAction", "proposedText", "isRuleViolation" }] }`;
       const userPrompt = `TEXT TO REVIEW:\n"""\n${textToReview}\n"""`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.2 },
       });
@@ -640,7 +801,7 @@ ${JSON.stringify(study, null, 2)}`;
         qualitativeSummary: parsed.qualitativeSummary || 'Editorial review complete.',
         counts,
         findings,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -657,8 +818,7 @@ ${JSON.stringify(study, null, 2)}`;
       const systemInstruction = `You are Quality Control auditor for "Science of Gifts". Check factual consistency, cross-product repetition, SEO alignment. Output JSON: { "summary", "findings": [{ "category", "severity", "title", "location", "explanation", "suggestedAction", "targetText", "proposedText" }] }`;
       const userPrompt = `DOCUMENT:\n${documentContent}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.1 },
       });
@@ -672,7 +832,7 @@ ${JSON.stringify(study, null, 2)}`;
         ok: true,
         summary: parsed.summary || 'Quality control audit complete.',
         findings: parsed.findings,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -715,8 +875,7 @@ ${customStructureNotes ? `CUSTOM STRUCTURE NOTES: ${customStructureNotes}\n` : '
 ${JSON.stringify(brief, null, 2)}
 ${editorialDevelopment?.direction ? `EDITORIAL DIRECTION:\n${JSON.stringify(editorialDevelopment.direction, null, 2)}\n` : ''}${Array.isArray(attachedStudies) && attachedStudies.length > 0 ? `ATTACHED RESEARCH STUDIES:\n${JSON.stringify(attachedStudies.map((s: any) => ({ id: s.id, title: s.title, keyFindings: s.analysis?.whatTheStudyFound || s.keyFindings || [] })))}\n` : ''}${Array.isArray(internalLinks) && internalLinks.length > 0 ? `INTERNAL LINKS:\n${JSON.stringify(internalLinks.slice(0, 15).map((l: any) => ({ id: l.id, title: l.title, url: l.url, preferredAnchor: l.preferredAnchor })))}\n` : ''}Generate a 5-7 section ${structureType} outline now.`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.6 },
       });
@@ -744,7 +903,7 @@ ${editorialDevelopment?.direction ? `EDITORIAL DIRECTION:\n${JSON.stringify(edit
 
       return jsonResponse({
         ok: true,
-        modelUsed: modelToUse,
+        modelUsed,
         structureType: parsed?.structureType || structureType,
         rationale: parsed?.rationale || 'Constructed intellectual progression.',
         outline: formatted,
@@ -760,8 +919,7 @@ ${editorialDevelopment?.direction ? `EDITORIAL DIRECTION:\n${JSON.stringify(edit
       const systemInstruction = `You are editorial strategist for "Science of Gifts". Discover 8-12 distinct, high-intent article concepts for "${topic}". Output JSON: { "ideas": [{ "title", "angle", "whyInteresting", "searchIntent" }] }`;
       const userPrompt = `TOPIC: ${topic}\nAUDIENCE: ${audience}\nGOAL: ${goal}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
       });
@@ -783,7 +941,7 @@ ${editorialDevelopment?.direction ? `EDITORIAL DIRECTION:\n${JSON.stringify(edit
       return jsonResponse({
         ok: true,
         ideas,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -798,8 +956,7 @@ ${editorialDevelopment?.direction ? `EDITORIAL DIRECTION:\n${JSON.stringify(edit
       const userPrompt = `TOPIC: ${topic}
 ${idea?.angle ? `INITIAL SEED ANGLE: ${idea.angle}\n` : ''}${idea?.whyInteresting ? `WHY INTERESTING: ${idea.whyInteresting}\n` : ''}${targetAudience ? `TARGET AUDIENCE: ${targetAudience}\n` : ''}Generate 5 genuinely distinct editorial angles.`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.75 },
       });
@@ -820,7 +977,7 @@ ${idea?.angle ? `INITIAL SEED ANGLE: ${idea.angle}\n` : ''}${idea?.whyInterestin
         role: 'unassigned',
       }));
 
-      return jsonResponse({ ok: true, angles, modelUsed: modelToUse });
+      return jsonResponse({ ok: true, angles, modelUsed });
     }
 
     // 10. POST /api/gemini/create-editorial-brief
@@ -966,8 +1123,7 @@ ${JSON.stringify(
         ],
       };
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: {
           systemInstruction,
@@ -1012,7 +1168,7 @@ ${JSON.stringify(
             : defaultAvoid,
       };
 
-      return jsonResponse({ ok: true, brief, modelUsed: modelToUse });
+      return jsonResponse({ ok: true, brief, modelUsed });
     }
 
     // 11. POST /api/gemini/analyze-style
@@ -1028,8 +1184,7 @@ ${JSON.stringify(
       const systemInstruction = `You are master literary stylist for "Science of Gifts". Dissect writing samples and extract style analysis and reusable instructions for writers. Output JSON: { "summary", "characteristics": [{ "category", "observation", "evidence", "isCommonAcrossSamples" }], "reusableInstructions": [] }`;
       const userPrompt = `PROFILE: "${profileName}"\nSAMPLES:\n${JSON.stringify(samples)}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
       });
@@ -1046,7 +1201,7 @@ ${JSON.stringify(
         commonCharacteristics: parsed.commonCharacteristics || parsed.characteristics.filter((c: any) => c.isCommonAcrossSamples),
         sampleSpecificCharacteristics: parsed.sampleSpecificCharacteristics || parsed.characteristics.filter((c: any) => !c.isCommonAcrossSamples),
         reusableInstructions: toStringArray(parsed.reusableInstructions),
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -1085,8 +1240,7 @@ Output ONLY valid JSON matching:
 }`;
       const userPrompt = `STUDY:\n${JSON.stringify(study)}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.2 },
       });
@@ -1102,7 +1256,7 @@ Output ONLY valid JSON matching:
         id: rawAnalysis.id || `analysis-${Date.now()}`,
         studyId: study.id || rawAnalysis.studyId || '',
         analyzedAt: now,
-        modelUsed: modelToUse,
+        modelUsed,
         whatWasStudied: String(rawAnalysis.whatWasStudied || '').trim(),
         whatTheStudyFound: toStringArray(rawAnalysis.whatTheStudyFound),
         whatItMeans: String(rawAnalysis.whatItMeans || '').trim(),
@@ -1133,7 +1287,7 @@ Output ONLY valid JSON matching:
         ok: true,
         analysis,
         claims,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -1150,8 +1304,7 @@ Output ONLY valid JSON matching:
       const systemInstruction = `You are research strategist for "Science of Gifts". Formulate high-intent article concepts from research studies. Output JSON: { "ideas": [{ "title", "angle", "whyInteresting", "searchIntent", "supportingStudies" }] }`;
       const userPrompt = `STUDIES:\n${JSON.stringify(studies)}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
       });
@@ -1165,7 +1318,7 @@ Output ONLY valid JSON matching:
       return jsonResponse({
         ok: true,
         ideas: ideasList,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -1182,8 +1335,7 @@ Output ONLY valid JSON matching:
       const systemInstruction = `You are editorial architect for "Science of Gifts". Build a research-aware outline mapping studies to sections. Output JSON: { "outline": [{ "id", "title", "description", "assignedStudyIds", "notes" }], "rationale" }`;
       const userPrompt = `PROJECT: "${project.title || 'Article'}"\nSTUDIES:\n${JSON.stringify(attachedStudies)}`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.6 },
       });
@@ -1198,7 +1350,7 @@ Output ONLY valid JSON matching:
         ok: true,
         outline: outlineList,
         rationale: parsed?.rationale || 'Mapped research studies to outline sections.',
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -1337,70 +1489,163 @@ Output ONLY valid JSON matching:
     // 17. POST /api/products/analyze-research
     if (pathname === '/api/products/analyze-research' && request.method === 'POST') {
       const ai = getAi();
-      const { url: inputUrl, modelOverride, guideContext = {} } = body;
-      if (!inputUrl || typeof inputUrl !== 'string' || !inputUrl.trim()) {
-        throw new Error('Product URL is required for research synthesis');
+      const {
+        url: inputUrl,
+        modelOverride,
+        guideContext = {},
+        mockupImages = [],
+        productContext = {},
+      } = body;
+
+      const targetUrl = typeof inputUrl === 'string' ? inputUrl.trim() : '';
+      const validMockupImages = Array.isArray(mockupImages)
+        ? mockupImages.filter((img: any) => Boolean(img && img.dataUrl && String(img.dataUrl).trim()))
+        : [];
+
+      if (!targetUrl && validMockupImages.length === 0) {
+        return jsonResponse(
+          {
+            ok: false,
+            error:
+              'Please provide a product URL, upload at least one mockup image, or provide both to analyze.',
+          },
+          400
+        );
       }
-      const targetUrl = inputUrl.trim();
+
       const modelToUse = resolveModel(modelOverride, 'gemini-3.6-flash');
 
-      const fetchRes = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-      });
-      if (!fetchRes.ok) {
-        throw new Error(`Could not access product page at ${targetUrl}`);
+      let extractedUrlFacts: ExtractedUrlPageFacts | null = null;
+      if (targetUrl) {
+        const fetchRes = await fetch(targetUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+        });
+        if (!fetchRes.ok) {
+          throw new Error(`Could not access product page at ${targetUrl} (Status: ${fetchRes.status})`);
+        }
+        const pageHtml = await fetchRes.text();
+        extractedUrlFacts = extractProductFactsFromHtml(pageHtml, targetUrl);
       }
-      const pageHtml = await fetchRes.text();
-      const textSnippet = pageHtml
-        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 4000);
 
-      const prompt = `You are a senior product researcher for Science of Gifts. Analyze the product page and synthesize research fields for a gift guide entry.\nURL: ${targetUrl}\nExcerpt: ${textSnippet}\nContext: ${JSON.stringify(guideContext)}\nReturn JSON with keys: productName, productType, productUrl, imageUrl, materials, features, dimensions, colors, designConcept, historicalContext, whyItFits, bestFor, buyerConsiderations, intendedRecipient, targetAudience, additionalFacts, rawProductInfo, canonicalUrl.`;
-
-      const geminiRes = await ai.models.generateContent({
-        model: modelToUse,
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.3,
-        },
+      const { analysisMode, contents, systemInstruction } = buildProductAnalysisPromptAndParts({
+        targetUrl,
+        extractedUrlFacts,
+        mockupImages: validMockupImages,
+        guideContext,
+        productContext,
       });
+
+      const { response: geminiRes, modelUsed } = await generateContentWithFallback(
+        ai,
+        modelToUse,
+        {
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        }
+      );
 
       const respText = geminiRes.text?.trim() || '';
-      const parsed = JSON.parse(respText);
+      const parsed = parseModelJson(respText);
       if (!parsed || typeof parsed !== 'object') {
         throw new Error('Model did not return structured product research object');
       }
 
+      const normalizedMetadata = normalizeProductResearchOutput({
+        analysisMode,
+        targetUrl,
+        extractedUrlFacts,
+        parsedModelJson: parsed,
+        productContext,
+      });
+
       return jsonResponse({
         ok: true,
-        metadata: {
-          productName: parsed.productName || 'Curated Instrument',
-          productType: parsed.productType || 'Heirloom Tool',
-          productUrl: targetUrl,
-          imageUrl: parsed.imageUrl || '',
-          materials: parsed.materials || 'Traditional honest materials',
-          features: parsed.features || '',
-          dimensions: parsed.dimensions || '',
-          colors: parsed.colors || '',
-          designConcept: parsed.designConcept || 'Clean mechanical form.',
-          historicalContext: parsed.historicalContext || 'Workshop lineage.',
-          whyItFits: parsed.whyItFits || 'Offers authentic craft and lasting utility.',
-          bestFor: parsed.bestFor || 'Enthusiasts and discerning recipients.',
-          buyerConsiderations: parsed.buyerConsiderations || 'Requires minimal periodic care.',
-          intendedRecipient: parsed.intendedRecipient || parsed.bestFor || '',
-          targetAudience: parsed.targetAudience || '',
-          additionalFacts: parsed.additionalFacts || '',
-          rawProductInfo: parsed.rawProductInfo || textSnippet.slice(0, 300),
-          canonicalUrl: parsed.canonicalUrl || targetUrl,
-        },
-        modelUsed: modelToUse,
+        metadata: normalizedMetadata,
+        modelUsed,
+      });
+    }
+
+    // 17b. POST /api/products/generate-creative-direction
+    if (pathname === '/api/products/generate-creative-direction' && request.method === 'POST') {
+      const ai = getAi();
+      const {
+        productName = '',
+        productType = '',
+        productUrl = '',
+        rawProductInfo = '',
+        epistemicAnalysis = {},
+        productContext = {},
+        currentPositioning = {},
+        editorCustomGuidance = '',
+        regenerateTarget = 'all',
+        mockupImages = [],
+        modelOverride,
+      } = body;
+
+      const requestedModel = resolveModel(modelOverride, 'gemini-3.6-flash');
+      const validMockupImages = Array.isArray(mockupImages)
+        ? mockupImages.filter((img: any) => Boolean(img && img.dataUrl && String(img.dataUrl).trim()))
+        : [];
+
+      const safeTarget: CreativeDirectionRegenerateTarget =
+        regenerateTarget === 'titles_only' || regenerateTarget === 'angles_only'
+          ? regenerateTarget
+          : 'all';
+
+      const { systemInstruction, contents } = buildCreativeDirectionPromptAndParts({
+        productName,
+        productType,
+        productUrl,
+        rawProductInfo,
+        epistemicAnalysis,
+        productContext,
+        currentPositioning,
+        editorCustomGuidance,
+        regenerateTarget: safeTarget,
+        mockupImages: validMockupImages,
+      });
+
+      const { response: geminiRes, modelUsed } = await generateContentWithFallback(
+        ai,
+        requestedModel,
+        {
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            temperature: 0.65,
+          },
+        }
+      );
+
+      const parsed = parseModelJson(geminiRes.text?.trim() || '');
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Model did not return structured creative direction JSON');
+      }
+
+      const creativeDirection = normalizeCreativeDirectionOutput(parsed, {
+        productName,
+        productType,
+        intendedRecipient: productContext?.intendedRecipient,
+        visibleText: epistemicAnalysis?.visibleObservations?.visibleText,
+        designConcept: epistemicAnalysis?.editorialInferences?.designConcept,
+        unverifiedFields: epistemicAnalysis?.verifiedFacts?.unverifiedFields,
+        editorCustomGuidance,
+        modelUsed,
+      });
+
+      return jsonResponse({
+        ok: true,
+        creativeDirection,
+        modelUsed,
       });
     }
 
@@ -1592,8 +1837,7 @@ Return ONLY valid JSON: { "cleanedTranscript": "string" }`;
         paragraphContext ? `CONTAINING PARAGRAPH:\n"""\n${paragraphContext}\n"""\n` : ''
       }RAW SPOKEN TRANSCRIPT:\n"""\n${rawTranscript}\n"""`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
         config: {
           systemInstruction,
@@ -1619,7 +1863,7 @@ Return ONLY valid JSON: { "cleanedTranscript": "string" }`;
       return jsonResponse({
         ok: true,
         cleanedTranscript,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 
@@ -1645,8 +1889,7 @@ Return ONLY valid JSON: { "rawTranscript": "string", "cleanedTranscript": "strin
         paragraphContext ? `CONTAINING PARAGRAPH:\n"""\n${paragraphContext}\n"""\n` : ''
       }Transcribe and clean the attached voice editing note.`;
 
-      const response = await ai.models.generateContent({
-        model: modelToUse,
+      const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: [
           {
             role: 'user',
@@ -1688,7 +1931,7 @@ Return ONLY valid JSON: { "rawTranscript": "string", "cleanedTranscript": "strin
         ok: true,
         rawTranscript,
         cleanedTranscript,
-        modelUsed: modelToUse,
+        modelUsed,
       });
     }
 

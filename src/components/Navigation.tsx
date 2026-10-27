@@ -52,6 +52,7 @@ interface NavigationProps {
     | 'research';
   activeProject: WritingProject | null;
   saveStatus: ProjectSaveStatus;
+  dashboardTab?: ProjectType | 'all';
   onManualSave?: () => void;
   onRetrySave?: () => void;
   onOpenConflictModal?: () => void;
@@ -76,6 +77,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   currentView,
   activeProject,
   saveStatus,
+  dashboardTab = 'all',
   onManualSave,
   onRetrySave,
   onOpenConflictModal,
@@ -289,7 +291,8 @@ export const Navigation: React.FC<NavigationProps> = ({
               type="button"
               onClick={() => onNavigate('dashboard', 'article')}
               className={`px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1.5 ${
-                currentView === 'workspace' && activeProject?.type === 'article'
+                (currentView === 'dashboard' && dashboardTab === 'article') ||
+                ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'article')
                   ? 'bg-[#eae4d7] text-[#1e232a] font-semibold shadow-2xs'
                   : 'text-[#615a50] hover:text-[#1e232a] hover:bg-[#efebe2]'
               }`}
@@ -303,7 +306,8 @@ export const Navigation: React.FC<NavigationProps> = ({
               type="button"
               onClick={() => onNavigate('dashboard', 'gift_guide')}
               className={`px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1.5 ${
-                currentView === 'workspace' && activeProject?.type === 'gift_guide'
+                (currentView === 'dashboard' && dashboardTab === 'gift_guide') ||
+                ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'gift_guide')
                   ? 'bg-[#eae4d7] text-[#1e232a] font-semibold shadow-2xs'
                   : 'text-[#615a50] hover:text-[#1e232a] hover:bg-[#efebe2]'
               }`}
@@ -317,7 +321,8 @@ export const Navigation: React.FC<NavigationProps> = ({
               type="button"
               onClick={() => onNavigate('dashboard', 'product_copy')}
               className={`px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1.5 ${
-                currentView === 'workspace' && activeProject?.type === 'product_copy'
+                (currentView === 'dashboard' && dashboardTab === 'product_copy') ||
+                ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'product_copy')
                   ? 'bg-[#eae4d7] text-[#1e232a] font-semibold shadow-2xs'
                   : 'text-[#615a50] hover:text-[#1e232a] hover:bg-[#efebe2]'
               }`}
@@ -1555,13 +1560,13 @@ export const Navigation: React.FC<NavigationProps> = ({
                 setIsMobileMenuOpen(false);
               }}
               className={`min-h-[44px] p-2.5 rounded-lg border text-left flex items-center gap-2.5 transition-colors ${
-                currentView === 'dashboard'
+                currentView === 'dashboard' && dashboardTab === 'all'
                   ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
                   : 'bg-white border-[#dcd6ca] text-[#1e232a] hover:bg-[#ede8dc]'
               }`}
             >
-              <LayoutDashboard className={`w-4 h-4 ${currentView === 'dashboard' ? 'text-amber-300' : 'text-[#5c5447]'}`} />
-              <span>Dashboard</span>
+              <LayoutDashboard className={`w-4 h-4 ${currentView === 'dashboard' && dashboardTab === 'all' ? 'text-amber-300' : 'text-[#5c5447]'}`} />
+              <span>All Projects</span>
             </button>
             <button
               type="button"
@@ -1570,12 +1575,13 @@ export const Navigation: React.FC<NavigationProps> = ({
                 setIsMobileMenuOpen(false);
               }}
               className={`min-h-[44px] p-2.5 rounded-lg border text-left flex items-center gap-2.5 transition-colors ${
-                currentView === 'workspace' && activeProject?.type === 'article'
+                (currentView === 'dashboard' && dashboardTab === 'article') ||
+                ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'article')
                   ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
                   : 'bg-white border-[#dcd6ca] text-[#1e232a] hover:bg-[#ede8dc]'
               }`}
             >
-              <FileText className={`w-4 h-4 ${currentView === 'workspace' && activeProject?.type === 'article' ? 'text-blue-300' : 'text-blue-800'}`} />
+              <FileText className={`w-4 h-4 ${(currentView === 'dashboard' && dashboardTab === 'article') || ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'article') ? 'text-blue-300' : 'text-blue-800'}`} />
               <span>Articles</span>
             </button>
             <button
@@ -1585,12 +1591,13 @@ export const Navigation: React.FC<NavigationProps> = ({
                 setIsMobileMenuOpen(false);
               }}
               className={`min-h-[44px] p-2.5 rounded-lg border text-left flex items-center gap-2.5 transition-colors ${
-                currentView === 'workspace' && activeProject?.type === 'gift_guide'
+                (currentView === 'dashboard' && dashboardTab === 'gift_guide') ||
+                ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'gift_guide')
                   ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
                   : 'bg-white border-[#dcd6ca] text-[#1e232a] hover:bg-[#ede8dc]'
               }`}
             >
-              <Gift className={`w-4 h-4 ${currentView === 'workspace' && activeProject?.type === 'gift_guide' ? 'text-amber-300' : 'text-amber-800'}`} />
+              <Gift className={`w-4 h-4 ${(currentView === 'dashboard' && dashboardTab === 'gift_guide') || ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'gift_guide') ? 'text-amber-300' : 'text-amber-800'}`} />
               <span>Gift Guides</span>
             </button>
             <button
@@ -1600,12 +1607,13 @@ export const Navigation: React.FC<NavigationProps> = ({
                 setIsMobileMenuOpen(false);
               }}
               className={`min-h-[44px] p-2.5 rounded-lg border text-left flex items-center gap-2.5 transition-colors ${
-                currentView === 'workspace' && activeProject?.type === 'product_copy'
+                (currentView === 'dashboard' && dashboardTab === 'product_copy') ||
+                ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'product_copy')
                   ? 'bg-[#1e232a] text-white border-[#1e232a] font-semibold'
                   : 'bg-white border-[#dcd6ca] text-[#1e232a] hover:bg-[#ede8dc]'
               }`}
             >
-              <Tag className={`w-4 h-4 ${currentView === 'workspace' && activeProject?.type === 'product_copy' ? 'text-emerald-300' : 'text-emerald-800'}`} />
+              <Tag className={`w-4 h-4 ${(currentView === 'dashboard' && dashboardTab === 'product_copy') || ((currentView === 'workspace' || currentView === 'editorial_development') && activeProject?.type === 'product_copy') ? 'text-emerald-300' : 'text-emerald-800'}`} />
               <span>Product Copies</span>
             </button>
           </div>

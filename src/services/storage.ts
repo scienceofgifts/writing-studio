@@ -13,7 +13,9 @@ import {
   AISettings,
   ProjectBrief,
   ContentRule,
-  OutlineItem
+  OutlineItem,
+  ProductContextProfile,
+  ProductCopyMetadata,
 } from '../types/project';
 import { StyleProfile } from '../types/styleReference';
 import { InternalLink } from '../types/internalLink';
@@ -30,7 +32,10 @@ import { DEFAULT_GLOBAL_MODEL_ID, MODEL_REGISTRY } from './modelRegistry';
 import { SavedEditorialIdea } from '../types/ideaGenerator';
 import { ResearchStudy, ResearchClaim, ResearchFile } from '../types/research';
 import { ProjectVersionSnapshot } from '../types/versionHistory';
-import { mergeVersionHistories } from './versionHistoryService';
+import {
+  mergeVersionHistories,
+  sanitizeProductCopyMetaForSnapshot,
+} from './versionHistoryService';
 import { indexedDBService, STORES } from './indexedDB';
 import { syncEngine } from './syncEngine';
 
@@ -49,6 +54,40 @@ const STORAGE_KEY_RESEARCH_CLAIMS = 'sog_research_claims_v1';
 const STORAGE_KEY_RESEARCH_FILES = 'sog_research_files_v1';
 const STORAGE_KEY_LAST_BACKUP = 'sog_last_backup_timestamp_v1';
 const STORAGE_KEY_SEEDS_INITIALIZED = 'sog_seeds_initialized_v1';
+const STORAGE_KEY_PRODUCT_CONTEXT_PROFILES = 'sog_product_context_profiles_v1';
+const STORAGE_KEY_PRODUCT_MOCKUP_ASSETS = 'sog_product_mockup_assets_v1';
+
+// In-memory cache of mockup image dataUrls keyed by mockup image ID
+const mockupAssetMemoryCache = new Map<string, string>();
+
+export const DEFAULT_PRODUCT_CONTEXT_PROFILES: ProductContextProfile[] = [
+  {
+    id: 'pcp-science-lab',
+    name: 'Science & Lab Enthusiasts',
+    intendedRecipient: 'Research scientists, physicists, chemists, and science educators',
+    giftGuideOrOccasion: 'Science & Laboratory Gift Guide',
+    targetAudience:
+      'Curious readers and academics who appreciate precision instruments, historical diagrams, and dry scientific wit',
+    contextNotes:
+      'Ground copy in accurate scientific terminology and tangible material details; avoid novelty clichés.',
+    isDefault: true,
+    createdAt: '2026-10-01T12:00:00.000Z',
+    updatedAt: '2026-10-01T12:00:00.000Z',
+  },
+  {
+    id: 'pcp-history-cartography',
+    name: 'History & Cartography Buffs',
+    intendedRecipient: 'History teachers, archivists, map collectors, and field researchers',
+    giftGuideOrOccasion: 'Historical & Cartography Collection',
+    targetAudience:
+      'Enthusiasts who value archival typography, period authenticity, and enduring craftsmanship',
+    contextNotes:
+      'Highlight genuine historical lineage, manuscript motifs, or cartographic precision without melodrama.',
+    isDefault: false,
+    createdAt: '2026-10-01T12:00:00.000Z',
+    updatedAt: '2026-10-01T12:00:00.000Z',
+  },
+];
 
 export function areSeedsInitialized(): boolean {
   try {
@@ -798,6 +837,19 @@ export const storage = {
             const independentVersions = this.getProjectVersions(p.id);
             const mergedVersions = mergeVersionHistories(p.versionHistory, independentVersions);
 
+            // Re-hydrate productCopyMeta.mockupImages dataUrl from dedicated mockup asset storage
+            let productCopyMeta = p.productCopyMeta;
+            if (productCopyMeta && Array.isArray(productCopyMeta.mockupImages)) {
+              const assetsMap = this.getProductMockupAssetsMap();
+              productCopyMeta = {
+                ...productCopyMeta,
+                mockupImages: productCopyMeta.mockupImages.map((img) => ({
+                  ...img,
+                  dataUrl: img.dataUrl || mockupAssetMemoryCache.get(img.id) || assetsMap[img.id],
+                })),
+              };
+            }
+
             return {
               ...p,
               content: ensureSemanticHtml(p.content),
@@ -812,6 +864,7 @@ export const storage = {
               projectInstructions: p.projectInstructions || '',
               giftGuideMeta,
               articleMeta,
+              productCopyMeta,
               versionHistory: mergedVersions.length > 0 ? mergedVersions : p.versionHistory,
             };
           });
@@ -906,8 +959,34 @@ export const storage = {
   },
 
   saveRawProjects(projects: WritingProject[], options?: { silent?: boolean }): void {
+    // Extract mockup image dataUrls into dedicated asset store so STORAGE_KEY_PROJECTS stays lightweight
+    const extractedAssets: Record<string, string> = {};
+    let hasNewAssets = false;
+
+    const projectsForLocalStorage: WritingProject[] = projects.map((proj) => {
+      if (proj.productCopyMeta && Array.isArray(proj.productCopyMeta.mockupImages)) {
+        for (const img of proj.productCopyMeta.mockupImages) {
+          if (img.id && img.dataUrl) {
+            mockupAssetMemoryCache.set(img.id, img.dataUrl);
+            extractedAssets[img.id] = img.dataUrl;
+            hasNewAssets = true;
+          }
+        }
+        return {
+          ...proj,
+          productCopyMeta: sanitizeProductCopyMetaForSnapshot(proj.productCopyMeta),
+        };
+      }
+      return proj;
+    });
+
+    if (hasNewAssets) {
+      const currentAssets = this.getProductMockupAssetsMap();
+      this.saveProductMockupAssetsMap({ ...currentAssets, ...extractedAssets });
+    }
+
     try {
-      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projectsForLocalStorage));
     } catch (e) {
       console.error('Failed to save projects to localStorage:', e);
     }
@@ -1137,6 +1216,7 @@ export const storage = {
         newProject.content = `<h1>${newProject.title}</h1><p>Introduce the curatorial premise of this gift guide here in unhurried, civilized prose...</p>`;
       }
     } else if (type === 'product_copy') {
+      const defaultContextProfile = this.getDefaultProductContextProfile();
       newProject.productCopyMeta = {
         productName: newProject.title,
         productType: '',
@@ -1146,7 +1226,11 @@ export const storage = {
         features: '',
         designDetails: '',
         historicalContext: '',
-        targetAudience: '',
+        intendedRecipient: defaultContextProfile?.intendedRecipient || '',
+        giftGuideOrOccasion: defaultContextProfile?.giftGuideOrOccasion || '',
+        targetAudience: defaultContextProfile?.targetAudience || '',
+        contextNotes: defaultContextProfile?.contextNotes || '',
+        contextProfileId: defaultContextProfile?.id,
         headline: '',
         standfirst: '',
         description: '',
@@ -1182,7 +1266,7 @@ export const storage = {
           writingControls: newProject.writingControls,
           articleMeta: newProject.articleMeta,
           giftGuideMeta: newProject.giftGuideMeta,
-          productCopyMeta: newProject.productCopyMeta,
+          productCopyMeta: sanitizeProductCopyMetaForSnapshot(newProject.productCopyMeta),
         },
       },
     ];
@@ -2485,6 +2569,201 @@ export const storage = {
   },
 
   // ==========================================
+  // PRODUCT CONTEXT PROFILES & MOCKUP ASSETS (Stage 2)
+  // ==========================================
+  getRawProductContextProfilesIncludingDeleted(): ProductContextProfile[] {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_PRODUCT_CONTEXT_PROFILES);
+      if (stored !== null) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to read product context profiles from localStorage:', e);
+    }
+
+    const seed = DEFAULT_PRODUCT_CONTEXT_PROFILES.map((p) => ({ ...p }));
+    this.saveProductContextProfiles(seed, { silent: true });
+    return seed;
+  },
+
+  getProductContextProfiles(): ProductContextProfile[] {
+    return this.getRawProductContextProfilesIncludingDeleted().filter((p) => !p._isDeleted);
+  },
+
+  getProductContextProfileById(id: string): ProductContextProfile | undefined {
+    if (!id) return undefined;
+    return this.getProductContextProfiles().find((p) => p.id === id);
+  },
+
+  getDefaultProductContextProfile(): ProductContextProfile | undefined {
+    const profiles = this.getProductContextProfiles();
+    return profiles.find((p) => Boolean(p.isDefault));
+  },
+
+  saveProductContextProfiles(
+    profiles: ProductContextProfile[],
+    options?: { silent?: boolean }
+  ): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_PRODUCT_CONTEXT_PROFILES, JSON.stringify(profiles));
+    } catch (e) {
+      console.error('Failed to save product context profiles to localStorage:', e);
+    }
+    indexedDBService
+      .put(STORES.SETTINGS, { key: 'productContextProfiles', value: profiles })
+      .catch((err) => {
+        console.warn('Async IndexedDB saveProductContextProfiles error:', err);
+      });
+    if (!options?.silent) {
+      this.notifyListeners('non_project');
+    }
+  },
+
+  saveProductContextProfile(
+    input: Omit<ProductContextProfile, 'id' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    }
+  ): ProductContextProfile {
+    const rawList = this.getRawProductContextProfilesIncludingDeleted();
+    const now = new Date().toISOString();
+    const id =
+      input.id && input.id.trim()
+        ? input.id.trim()
+        : `pcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+    const existingIdx = rawList.findIndex((p) => p.id === id);
+    const savedProfile: ProductContextProfile = {
+      id,
+      name: (input.name || 'Untitled Context Profile').trim(),
+      intendedRecipient: (input.intendedRecipient || '').trim(),
+      giftGuideOrOccasion: (input.giftGuideOrOccasion || '').trim(),
+      targetAudience: (input.targetAudience || '').trim(),
+      contextNotes: (input.contextNotes || '').trim(),
+      isDefault: Boolean(input.isDefault),
+      createdAt:
+        existingIdx >= 0 ? rawList[existingIdx].createdAt || now : input.createdAt || now,
+      updatedAt: now,
+      _isDeleted: false,
+    };
+
+    let updated = [...rawList];
+    if (savedProfile.isDefault) {
+      updated = updated.map((p) => (p.id === id ? p : { ...p, isDefault: false }));
+    }
+
+    if (existingIdx >= 0) {
+      updated[existingIdx] = savedProfile;
+    } else {
+      updated.push(savedProfile);
+    }
+
+    this.saveProductContextProfiles(updated);
+    return savedProfile;
+  },
+
+  deleteProductContextProfile(id: string): void {
+    if (!id) return;
+    const rawList = this.getRawProductContextProfilesIncludingDeleted();
+    const now = new Date().toISOString();
+    const updated = rawList.map((p) =>
+      p.id === id
+        ? { ...p, isDefault: false, _isDeleted: true, deletedAt: now, updatedAt: now }
+        : p
+    );
+    this.saveProductContextProfiles(updated);
+  },
+
+  setDefaultProductContextProfile(id: string | null): void {
+    const rawList = this.getRawProductContextProfilesIncludingDeleted();
+    const now = new Date().toISOString();
+    const updated = rawList.map((p) => {
+      if (p._isDeleted) return p;
+      const shouldBeDefault = Boolean(id && p.id === id);
+      if (Boolean(p.isDefault) === shouldBeDefault) return p;
+      return {
+        ...p,
+        isDefault: shouldBeDefault,
+        updatedAt: now,
+      };
+    });
+    this.saveProductContextProfiles(updated);
+  },
+
+  getProductMockupAssetsMap(): Record<string, string> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_PRODUCT_MOCKUP_ASSETS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === 'string') {
+              mockupAssetMemoryCache.set(k, v);
+            }
+          }
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to read product mockup assets from localStorage:', e);
+    }
+    const fromMem: Record<string, string> = {};
+    mockupAssetMemoryCache.forEach((v, k) => {
+      fromMem[k] = v;
+    });
+    return fromMem;
+  },
+
+  saveProductMockupAssetsMap(assetsMap: Record<string, string>): void {
+    for (const [k, v] of Object.entries(assetsMap)) {
+      if (typeof v === 'string' && v) {
+        mockupAssetMemoryCache.set(k, v);
+      }
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY_PRODUCT_MOCKUP_ASSETS, JSON.stringify(assetsMap));
+    } catch (e) {
+      console.warn('localStorage quota reached for mockup assets; relying on IndexedDB & memory cache:', e);
+    }
+    indexedDBService
+      .put(STORES.SETTINGS, { key: 'productMockupAssets', value: assetsMap })
+      .catch((err) => {
+        console.warn('Async IndexedDB saveProductMockupAssetsMap error:', err);
+      });
+  },
+
+  getProductMockupAsset(imageId: string): string | undefined {
+    if (!imageId) return undefined;
+    if (mockupAssetMemoryCache.has(imageId)) {
+      return mockupAssetMemoryCache.get(imageId);
+    }
+    const map = this.getProductMockupAssetsMap();
+    return map[imageId];
+  },
+
+  setProductMockupAsset(imageId: string, dataUrl: string): void {
+    if (!imageId || !dataUrl) return;
+    mockupAssetMemoryCache.set(imageId, dataUrl);
+    const map = this.getProductMockupAssetsMap();
+    map[imageId] = dataUrl;
+    this.saveProductMockupAssetsMap(map);
+  },
+
+  deleteProductMockupAsset(imageId: string): void {
+    if (!imageId) return;
+    mockupAssetMemoryCache.delete(imageId);
+    const map = this.getProductMockupAssetsMap();
+    if (imageId in map) {
+      delete map[imageId];
+      this.saveProductMockupAssetsMap(map);
+    }
+  },
+
+  // ==========================================
   // INDEXEDDB HYDRATION & LIFECYCLE
   // ==========================================
   async init(): Promise<void> {
@@ -2507,6 +2786,7 @@ export const storage = {
         const researchClaims = this.getResearchClaims();
         const researchFiles = this.getResearchFiles();
         const savedIdeas = this.getSavedIdeas();
+        const productContextProfiles = this.getRawProductContextProfilesIncludingDeleted();
 
         await Promise.all([
           indexedDBService.putMany(STORES.PROJECTS, projects),
@@ -2519,13 +2799,42 @@ export const storage = {
           indexedDBService.putMany(STORES.SAVED_IDEAS, savedIdeas),
           indexedDBService.put(STORES.SETTINGS, { key: 'theme', value: this.getTheme() }),
           indexedDBService.put(STORES.SETTINGS, { key: 'globalModel', value: this.getGlobalModel() }),
+          indexedDBService.put(STORES.SETTINGS, {
+            key: 'productContextProfiles',
+            value: productContextProfiles,
+          }),
         ]);
         console.info('IndexedDB initialized & populated with durable studio data.');
       } else {
         // IndexedDB already contains data: hydrate cache from IndexedDB
+        const idbSettings = await indexedDBService.getAll<{ key: string; value: any }>(STORES.SETTINGS);
+        for (const item of idbSettings) {
+          if (item.key === 'lastBackupTimestamp' && item.value) {
+            localStorage.setItem(STORAGE_KEY_LAST_BACKUP, item.value);
+          }
+          if (item.key === 'theme' && item.value) {
+            localStorage.setItem(STORAGE_KEY_THEME, item.value);
+          }
+          if (item.key === 'globalModel' && item.value) {
+            localStorage.setItem(STORAGE_KEY_GLOBAL_MODEL, item.value);
+          }
+          if (item.key === 'productContextProfiles' && Array.isArray(item.value)) {
+            localStorage.setItem(STORAGE_KEY_PRODUCT_CONTEXT_PROFILES, JSON.stringify(item.value));
+          }
+          if (item.key === 'productMockupAssets' && item.value && typeof item.value === 'object') {
+            for (const [k, v] of Object.entries(item.value)) {
+              if (typeof v === 'string') {
+                mockupAssetMemoryCache.set(k, v);
+              }
+            }
+            try {
+              localStorage.setItem(STORAGE_KEY_PRODUCT_MOCKUP_ASSETS, JSON.stringify(item.value));
+            } catch {}
+          }
+        }
         const idbProjects = await indexedDBService.getAll<WritingProject>(STORES.PROJECTS);
         if (idbProjects.length > 0) {
-          localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(idbProjects));
+          this.saveRawProjects(idbProjects, { silent: true });
         }
         const idbProfiles = await indexedDBService.getAll<StyleProfile>(STORES.STYLE_PROFILES);
         if (idbProfiles.length > 0) {
@@ -2554,18 +2863,6 @@ export const storage = {
         const idbIdeas = await indexedDBService.getAll<SavedEditorialIdea>(STORES.SAVED_IDEAS);
         if (idbIdeas.length > 0) {
           localStorage.setItem(STORAGE_KEY_SAVED_IDEAS, JSON.stringify(idbIdeas));
-        }
-        const idbSettings = await indexedDBService.getAll<{ key: string; value: any }>(STORES.SETTINGS);
-        for (const item of idbSettings) {
-          if (item.key === 'lastBackupTimestamp' && item.value) {
-            localStorage.setItem(STORAGE_KEY_LAST_BACKUP, item.value);
-          }
-          if (item.key === 'theme' && item.value) {
-            localStorage.setItem(STORAGE_KEY_THEME, item.value);
-          }
-          if (item.key === 'globalModel' && item.value) {
-            localStorage.setItem(STORAGE_KEY_GLOBAL_MODEL, item.value);
-          }
         }
         this.notifyListeners();
       }

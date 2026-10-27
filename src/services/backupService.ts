@@ -45,6 +45,8 @@ export class BackupService {
       activeProjectId: storage.getActiveProjectId(),
       linkCategories: storage.getLinkCategories(),
       lastBackupTimestamp: storage.getLastBackupTimestamp(),
+      productContextProfiles: storage.getProductContextProfiles(),
+      productMockupAssets: storage.getProductMockupAssetsMap(),
     };
 
     return {
@@ -467,6 +469,26 @@ export class BackupService {
     if (strategy === 'replace' && incoming.settings) {
       if (incoming.settings.theme) storage.setTheme(incoming.settings.theme);
       if (incoming.settings.globalModel) storage.setGlobalModel(incoming.settings.globalModel);
+      if (Array.isArray(incoming.settings.productContextProfiles)) {
+        storage.saveProductContextProfiles(incoming.settings.productContextProfiles);
+      }
+      if (incoming.settings.productMockupAssets && typeof incoming.settings.productMockupAssets === 'object') {
+        storage.saveProductMockupAssetsMap(incoming.settings.productMockupAssets);
+      }
+    } else if (incoming.settings) {
+      if (Array.isArray(incoming.settings.productContextProfiles)) {
+        const existingProfiles = storage.getProductContextProfiles();
+        const existingIds = new Set(existingProfiles.map((p) => p.id));
+        const mergedProfiles = [
+          ...existingProfiles,
+          ...incoming.settings.productContextProfiles.filter((p: any) => p && p.id && !existingIds.has(p.id)),
+        ];
+        storage.saveProductContextProfiles(mergedProfiles);
+      }
+      if (incoming.settings.productMockupAssets && typeof incoming.settings.productMockupAssets === 'object') {
+        const currentAssets = storage.getProductMockupAssetsMap();
+        storage.saveProductMockupAssetsMap({ ...incoming.settings.productMockupAssets, ...currentAssets });
+      }
     }
 
     const importedCounts = {

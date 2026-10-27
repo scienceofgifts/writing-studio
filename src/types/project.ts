@@ -264,6 +264,202 @@ export interface ProductCopyVariants {
   technicalHistorical?: string;
 }
 
+export interface ProductContextProfile {
+  id: string;
+  name: string;
+  intendedRecipient: string;
+  giftGuideOrOccasion: string;
+  targetAudience: string;
+  contextNotes: string;
+  isDefault?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _isDeleted?: boolean;
+  deletedAt?: string;
+}
+
+export interface ProductMockupImage {
+  id: string;
+  name: string;
+  mimeType: string;
+  isPrimary: boolean;
+  width?: number;
+  height?: number;
+  originalSizeBytes?: number;
+  compressedSizeBytes?: number;
+  contentHash?: string;
+  addedAt: string;
+  /**
+   * Compressed data URL (e.g., data:image/webp;base64,... or data:image/jpeg;base64,...).
+   * Stored in dedicated asset storage and stripped from historical snapshots.
+   */
+  dataUrl?: string;
+}
+
+export type FieldVerificationStatus =
+  | 'verified_from_url'
+  | 'unverified'
+  | 'manual_entry'
+  | 'not_available';
+
+export interface ProductVerifiedFacts {
+  sourceUrl?: string;
+  canonicalUrl?: string;
+  price?: string;
+  materials?: string;
+  dimensions?: string;
+  colors?: string;
+  features?: string;
+  variants?: string;
+  additionalSpecs?: string;
+  verificationNotes?: string;
+  unverifiedFields?: string[];
+  fieldStatus?: Partial<
+    Record<
+      'price' | 'materials' | 'dimensions' | 'colors' | 'features' | 'variants',
+      FieldVerificationStatus
+    >
+  >;
+}
+
+export interface ProductVisibleObservations {
+  visibleText?: string;
+  designAndImagery?: string;
+  garmentOrObjectStyle?: string;
+  visibleColors?: string;
+  visualDetails?: string;
+}
+
+export interface ProductEditorialInferences {
+  designConcept?: string;
+  historicalOrCulturalContext?: string;
+  recipientResonance?: string;
+  editorialCaution?: string;
+}
+
+export interface ProductEpistemicAnalysis {
+  analysisMode: 'url_only' | 'image_only' | 'url_and_image';
+  analyzedAt: string;
+  modelUsed?: string;
+  verifiedFacts: ProductVerifiedFacts;
+  visibleObservations: ProductVisibleObservations;
+  editorialInferences: ProductEditorialInferences;
+}
+
+// =========================================================================
+// STAGE 3: PRODUCT CREATIVE DIRECTION & EDITORIAL INTELLIGENCE SUITE
+// =========================================================================
+
+export type ProductAngleRole =
+  | 'primary'
+  | 'secondary'
+  | 'do_not_use'
+  | 'unassigned';
+
+export type ProductBriefLengthPreset =
+  | 'concise_fourthwall'
+  | 'standard_editorial'
+  | 'object_monograph';
+
+export type ProductCopySectionId =
+  | 'headline_and_standfirst'
+  | 'editorial_description'
+  | 'design_and_visual_details'
+  | 'humor_and_cultural_context'
+  | 'recipient_and_gift_rationale'
+  | 'practical_use_and_suitability'
+  | 'caveats_and_who_not_for'
+  | 'technical_specifications';
+
+export interface ProductBriefConfiguration {
+  selectedSections?: ProductCopySectionId[];
+  targetWordCount?: number;
+  wordCountTolerancePercent?: number;
+  headlineCountsTowardWordCount?: boolean;
+  allowNarrativeSpecMention?: boolean;
+}
+
+export type ProductTitleRole =
+  | 'product_page'
+  | 'search_and_gift'
+  | 'domain_specificity'
+  | 'editorial_headline';
+
+export interface ProductTitleOption {
+  id: string;
+  title: string;
+  standfirst?: string;
+  styleArchetype: string;
+  titleRole?: ProductTitleRole;
+  includesProductCategory?: boolean;
+  searchIntent?: string;
+  targetKeywords?: string[];
+  intendedAppeal: string;
+  rationale: string;
+  strengths: string;
+  weaknesses: string;
+  isRecommended?: boolean;
+}
+
+export interface ProductPositioningAngleOption {
+  id: string;
+  title: string;
+  archetype: string;
+  coreHook: string;
+  supportingEvidence: string;
+  whatToEmphasize: string;
+  risksAndWhatToAvoid: string;
+  role: ProductAngleRole;
+}
+
+export interface ProductRecipientPersona {
+  id: string;
+  name: string;
+  profileSummary: string;
+  whyItResonates: string;
+  contextOfUse: string;
+}
+
+export interface ProductSecondaryAudience {
+  id: string;
+  audience: string;
+  whyItFits: string;
+}
+
+export interface ProductAudienceMismatch {
+  id: string;
+  whoShouldSkip: string;
+  whyItMismatches: string;
+  copyCaution: string;
+}
+
+export interface ProductAudienceAnalysis {
+  primaryPersonas: ProductRecipientPersona[];
+  secondaryAudiences: ProductSecondaryAudience[];
+  buyerMotivations: string[];
+  recipientPerspective: string;
+  audienceMismatches: ProductAudienceMismatch[];
+}
+
+export interface ProductCreativeDirectionSuite {
+  generatedAt: string;
+  modelUsed?: string;
+  editorCustomGuidance?: string;
+  titleOptions: ProductTitleOption[];
+  recommendedTitleId?: string;
+  recommendedTitleRationale?: string;
+  positioningAngles: ProductPositioningAngleOption[];
+  audienceAnalysis: ProductAudienceAnalysis;
+  editorialCautions: string[];
+  // Explicit user selections (never auto-applied without user action)
+  selectedPrimaryTitleId?: string;
+  selectedPrimaryAngleId?: string;
+  selectedSecondaryAngleIds?: string[];
+  excludedAngleIds?: string[];
+  selectedPersonaIds?: string[];
+  appliedMismatchIds?: string[];
+}
+
 export interface ProductCopyMetadata {
   // Product Information (Structured Facts)
   productName: string;
@@ -283,6 +479,21 @@ export interface ProductCopyMetadata {
   targetAudience?: string;
   productNotes?: string;
   additionalFacts?: string;
+
+  // Stage 2: Context Profile, Mockup Images, and Epistemic Analysis
+  contextProfileId?: string;
+  giftGuideOrOccasion?: string;
+  contextNotes?: string;
+  price?: string;
+  variantsSpec?: string;
+  mockupImages?: ProductMockupImage[];
+  epistemicAnalysis?: ProductEpistemicAnalysis;
+  lastAnalyzedAt?: string;
+
+  // Stage 3: Coordinated Creative Direction & Brief Configuration
+  creativeDirection?: ProductCreativeDirectionSuite;
+  briefLengthPreset?: ProductBriefLengthPreset;
+  briefConfig?: ProductBriefConfiguration;
 
   // Product Positioning
   positioning?: ProductPositioning;

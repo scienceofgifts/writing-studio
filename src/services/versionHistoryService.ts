@@ -3,7 +3,7 @@
  * Handles structured snapshot creation, retention management, version restoration, and editorial diffing.
  */
 
-import { WritingProject } from '../types/project';
+import { WritingProject, ProductCopyMetadata } from '../types/project';
 import {
   ProjectVersionSnapshot,
   VersionType,
@@ -15,6 +15,26 @@ import { reconcileNotesWithHtmlContent } from '../utils/editingNotes';
 import { ModelId } from '../types/models';
 
 const MAX_VERSION_COUNT = 50;
+
+/**
+ * Strips raw base64 dataUrl payloads from ProductCopyMetadata.mockupImages
+ * before storing inside historical snapshots or comparable fingerprints.
+ * Preserves id, name, mimeType, isPrimary, dimensions, byte sizes, and contentHash
+ * so dirty-state detection works accurately without duplicating image bytes across snapshots.
+ */
+export function sanitizeProductCopyMetaForSnapshot(
+  meta?: ProductCopyMetadata
+): ProductCopyMetadata | undefined {
+  if (!meta) return undefined;
+  const cloned: ProductCopyMetadata = JSON.parse(JSON.stringify(meta));
+  if (Array.isArray(cloned.mockupImages)) {
+    cloned.mockupImages = cloned.mockupImages.map((img) => {
+      const { dataUrl: _omitted, ...metadataOnly } = img;
+      return metadataOnly;
+    });
+  }
+  return cloned;
+}
 
 /**
  * Extracts structured project state for snapshotting
@@ -30,7 +50,7 @@ export function extractStructuredState(project: WritingProject): StructuredProje
     styleProfileId: project.styleProfileId,
     articleMeta: project.articleMeta ? JSON.parse(JSON.stringify(project.articleMeta)) : undefined,
     giftGuideMeta: project.giftGuideMeta ? JSON.parse(JSON.stringify(project.giftGuideMeta)) : undefined,
-    productCopyMeta: project.productCopyMeta ? JSON.parse(JSON.stringify(project.productCopyMeta)) : undefined,
+    productCopyMeta: sanitizeProductCopyMetaForSnapshot(project.productCopyMeta),
     editingNotes: project.editingNotes ? JSON.parse(JSON.stringify(project.editingNotes)) : undefined,
   };
 }
@@ -53,13 +73,18 @@ export function createVersionSnapshot(
   const plainText = extractPlainTextFromHtml(content);
   const words = countWords(content);
   const chars = plainText.length;
+  const nextStructuredState = extractStructuredState(project);
 
-  // Deduplication check: if latest version has identical content and identical title, skip unless forced or manual with custom label
+  // Deduplication check: if latest version has identical content, identical title, and identical productCopyMeta, skip unless forced or manual
   if (existingHistory.length > 0 && !options?.force && type !== 'manual_save') {
     const latest = existingHistory[0];
+    const sameProductMeta =
+      JSON.stringify(latest.structuredState.productCopyMeta || null) ===
+      JSON.stringify(nextStructuredState.productCopyMeta || null);
     if (
       latest.content.trim() === content.trim() &&
       latest.structuredState.title === project.title &&
+      sameProductMeta &&
       latest.type === type
     ) {
       return existingHistory;
@@ -78,7 +103,7 @@ export function createVersionSnapshot(
     wordCount: words,
     characterCount: chars,
     content,
-    structuredState: extractStructuredState(project),
+    structuredState: nextStructuredState,
     modelUsed: options?.modelUsed,
     actionDescription: options?.actionDescription,
   };
@@ -155,6 +180,24 @@ export function restoreVersionSnapshot(
     actionDescription: `Restored from Version ${targetVersion.versionNumber}`,
   };
 
+  const currentMockupMap = new Map<string, string>();
+  for (const img of project.productCopyMeta?.mockupImages || []) {
+    if (img.id && img.dataUrl) {
+      currentMockupMap.set(img.id, img.dataUrl);
+    }
+  }
+
+  let restoredProductCopyMeta = restoredState.productCopyMeta || project.productCopyMeta;
+  if (restoredProductCopyMeta && Array.isArray(restoredProductCopyMeta.mockupImages)) {
+    restoredProductCopyMeta = {
+      ...restoredProductCopyMeta,
+      mockupImages: restoredProductCopyMeta.mockupImages.map((img) => ({
+        ...img,
+        dataUrl: img.dataUrl || currentMockupMap.get(img.id),
+      })),
+    };
+  }
+
   const updatedProject: WritingProject = {
     ...project,
     title: restoredState.title || project.title,
@@ -166,7 +209,7 @@ export function restoreVersionSnapshot(
     styleProfileId: restoredState.styleProfileId ?? project.styleProfileId,
     articleMeta: restoredState.articleMeta || project.articleMeta,
     giftGuideMeta: restoredState.giftGuideMeta || project.giftGuideMeta,
-    productCopyMeta: restoredState.productCopyMeta || project.productCopyMeta,
+    productCopyMeta: restoredProductCopyMeta,
     editingNotes: reconciledNotes,
     // Stale preservation: clear any pending ephemeral diff proposals
     versionHistory: [restoredCheckpoint, ...historyWithCurrentCheckpoint],
@@ -367,7 +410,7 @@ function buildComparableProjectFingerprint(project: WritingProject): string {
     writingControls: project.writingControls || null,
     articleMeta: project.articleMeta || null,
     giftGuideMeta: project.giftGuideMeta || null,
-    productCopyMeta: project.productCopyMeta || null,
+    productCopyMeta: sanitizeProductCopyMetaForSnapshot(project.productCopyMeta) || null,
     editorialDevelopment: project.editorialDevelopment || null,
     editingNotes: normalizedNotes,
     citationRecommendations: normalizedCitations,
