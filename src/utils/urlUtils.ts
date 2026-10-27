@@ -3,6 +3,13 @@
  * Cleans tracking parameters, validates URLs, and handles semantic HTML hyperlinking.
  */
 
+import { 
+  buildHtmlToPlainIndex, 
+  normalizePassageText, 
+  verifyTargetPassageInHtml,
+  expandHtmlRangeToBalancedTags
+} from './richText';
+
 const TRACKING_PARAMS = new Set([
   'utm_source',
   'utm_medium',
@@ -151,54 +158,130 @@ export function applyHyperlinkToHtml(
     return { updatedHtml: html, applied: false };
   }
 
-  const cleanHref = cleanTrackingParameters(url);
-  const trimmedAnchor = anchorText.trim();
-
-  // If already linked with this exact anchor inside an <a> tag, don't double-link
-  const alreadyLinkedRegex = new RegExp(`<a\\s+[^>]*href=["'][^"']+["'][^>]*>[^<]*${escapeRegex(trimmedAnchor)}[^<]*<\\/a>`, 'i');
-  if (alreadyLinkedRegex.test(html)) {
+  // Idempotency: don't add the same URL twice if it's already in the doc
+  if (isUrlAlreadyInDocument(url, html)) {
     return { updatedHtml: html, applied: false };
   }
 
-  // Strategy 1: If targetPassage is supplied, locate that passage and replace the anchor inside it
+  const cleanHref = cleanTrackingParameters(url);
+  const normalizedAnchor = normalizePassageText(anchorText);
+  
+  // Use robust indexing to find where the text actually lives in HTML
+  const { normText, normMap } = buildHtmlToPlainIndex(html);
+  const plainText = normText;
+  
+  let targetStart = -1;
+  let targetEnd = -1;
+
   if (targetPassage && targetPassage.trim()) {
-    const trimmedPassage = targetPassage.trim();
-    if (html.includes(trimmedPassage) && trimmedPassage.includes(trimmedAnchor)) {
-      const linkedAnchor = `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${trimmedAnchor}</a>`;
-      const updatedPassage = trimmedPassage.replace(trimmedAnchor, linkedAnchor);
-      const updatedHtml = html.replace(trimmedPassage, updatedPassage);
-      return { updatedHtml, applied: true };
+    const normalizedPassage = normalizePassageText(targetPassage);
+    const passageStart = plainText.indexOf(normalizedPassage);
+    
+    if (passageStart !== -1) {
+      // Find the anchor within the passage
+      const anchorInPassageOffset = normalizedPassage.indexOf(normalizedAnchor);
+      if (anchorInPassageOffset !== -1) {
+        targetStart = passageStart + anchorInPassageOffset;
+        targetEnd = targetStart + normalizedAnchor.length;
+      }
+    }
+  } else {
+    // Search globally for the first instance of the anchor
+    targetStart = plainText.indexOf(normalizedAnchor);
+    if (targetStart !== -1) {
+      targetEnd = targetStart + normalizedAnchor.length;
     }
   }
 
-  // Strategy 2: Match the first occurrence of the anchor text that is NOT already inside an <a> tag or attribute
-  // We use a regex that matches text outside of tags
-  const textPattern = new RegExp(`(?<!<[^>]*)(${escapeRegex(trimmedAnchor)})(?![^<]*<\\/a>)(?![^<]*>)`, 'i');
-  if (textPattern.test(html)) {
-    const updatedHtml = html.replace(
-      textPattern,
-      `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">$1</a>`
-    );
-    return { updatedHtml, applied: true };
-  }
+  if (targetStart !== -1 && targetEnd !== -1) {
+    let htmlStart = normMap[targetStart].htmlStart;
+    let htmlEnd = normMap[targetEnd - 1].htmlEnd;
 
-  // Fallback: direct first replacement if plain occurrence exists and not inside a tag
-  const directIndex = html.indexOf(trimmedAnchor);
-  if (directIndex !== -1) {
-    // Check if it's not inside an HTML tag attribute
-    const before = html.slice(0, directIndex);
-    const lastOpenTag = before.lastIndexOf('<');
-    const lastCloseTag = before.lastIndexOf('>');
-    const isInsideTag = lastOpenTag > lastCloseTag;
+    // Expand to include surrounding tags if we are splitting them (e.g. <strong>strong</strong> match)
+    const expanded = expandHtmlRangeToBalancedTags(html, htmlStart, htmlEnd);
+    htmlStart = expanded.start;
+    htmlEnd = expanded.end;
 
-    if (!isInsideTag) {
-      const linked = `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${trimmedAnchor}</a>`;
-      const updatedHtml = html.slice(0, directIndex) + linked + html.slice(directIndex + trimmedAnchor.length);
+    // Safety check: Ensure we aren't splitting an existing tag or already inside an <a>
+    const segment = html.substring(htmlStart, htmlEnd);
+    const before = html.substring(0, htmlStart);
+    
+    // Simple check for being inside a tag or an <a>
+    const isInsideTag = before.lastIndexOf('<') > before.lastIndexOf('>');
+    const isInsideLink = before.toLowerCase().lastIndexOf('<a') > before.toLowerCase().lastIndexOf('</a>');
+
+    if (!isInsideTag && !isInsideLink && !segment.toLowerCase().includes('<a')) {
+      const linked = `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${segment}</a>`;
+      const updatedHtml = html.substring(0, htmlStart) + linked + html.substring(htmlEnd);
       return { updatedHtml, applied: true };
     }
   }
 
   return { updatedHtml: html, applied: false };
+}
+
+/**
+ * Inserts a new sentence into the HTML immediately following a confirmed context sentence.
+ * Used for "suggest_new" internal link workflows.
+ */
+export function insertSentenceAfterContext(
+  html: string,
+  contextSentence: string,
+  newSentence: string,
+  url: string,
+  anchorText: string
+): { updatedHtml: string; applied: boolean } {
+  if (!html || !contextSentence || !newSentence || !url || !anchorText) {
+    return { updatedHtml: html, applied: false };
+  }
+
+  const cleanHref = cleanTrackingParameters(url);
+  const normalizedContext = normalizePassageText(contextSentence);
+  
+  const { normText, normMap } = buildHtmlToPlainIndex(html);
+  const plainText = normText;
+  
+  const contextStart = plainText.indexOf(normalizedContext);
+  if (contextStart === -1) {
+    return { updatedHtml: html, applied: false };
+  }
+
+  // Check for ambiguity (multiple matches)
+  if (plainText.indexOf(normalizedContext, contextStart + 1) !== -1) {
+    console.warn('Ambiguous context sentence for link insertion');
+    return { updatedHtml: html, applied: false };
+  }
+
+  const contextEndPlain = contextStart + normalizedContext.length;
+  const htmlEnd = normMap[contextEndPlain - 1].htmlEnd;
+
+  // We want to insert after the context sentence, but before any closing tags of the parent block if possible.
+  
+  // Format the new sentence with the link
+  const linkedSentence = newSentence.replace(
+    anchorText, 
+    `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${anchorText}</a>`
+  );
+
+  let insertionPoint = htmlEnd;
+  const trailingHtml = html.substring(htmlEnd);
+  
+  // If it's something like ". </p>", we keep the space/tags together
+  const blockClosingMatch = trailingHtml.match(/^(\s*)(<\/p>|<\/div>|<\/li>)/i);
+  if (blockClosingMatch) {
+    insertionPoint = htmlEnd + blockClosingMatch[1].length;
+  }
+
+  // Ensure single space separation if needed
+  const needsLeadingSpace = !html.substring(0, insertionPoint).endsWith(' ') && !linkedSentence.startsWith(' ');
+  const space = needsLeadingSpace ? ' ' : '';
+
+  const updatedHtml = 
+    html.substring(0, insertionPoint) + 
+    space + linkedSentence + 
+    html.substring(insertionPoint);
+
+  return { updatedHtml, applied: true };
 }
 
 function escapeRegex(string: string): string {

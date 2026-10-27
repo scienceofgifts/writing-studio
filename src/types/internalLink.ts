@@ -36,6 +36,8 @@ export interface LinkOpportunity {
   seoRationale?: string; // SEO rationale / search intent match / commercial relevance
   previewText?: string; // Preview of sentence with anchor inserted
   minimalRevision?: string; // Optional suggested minimal revision for review
+  workflowType?: 'match_existing' | 'suggest_new';
+  contextSentence?: string; // For suggest_new: the existing sentence after which to insert
   relevance?: 'high' | 'medium';
   status: LinkOpportunityStatus;
 }

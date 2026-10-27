@@ -560,8 +560,39 @@ export async function handleApiRequest(
         return jsonResponse({ ok: true, opportunities: [], rationale: 'No active links available in library.' });
       }
 
-      const systemInstruction = `You are senior editor and SEO linking strategist for "Science of Gifts". Analyze text and identify 2-5 high-value internal link opportunities from the library. Output JSON: { "opportunities": [{ "linkId", "linkTitle", "linkUrl", "destinationType", "targetPassage", "suggestedAnchor", "reason", "seoRationale", "previewText", "relevance" }], "rationale" }`;
-      const userPrompt = `PROJECT: "${projectTitle}"\nDOC:\n"""\n${documentContent}\n"""\nLIBRARY:\n${JSON.stringify(activeLinks)}`;
+      const systemInstruction = `You are senior editor and SEO linking strategist for "Science of Gifts".
+Your mission is to identify 2-5 high-value internal link opportunities from the library that provide genuine editorial value to the reader.
+
+WORKFLOWS:
+1. "match_existing": Use when an existing sentence naturally contains a phrase that can be hyperlinked to a library item.
+2. "suggest_new": Use when a library item is highly relevant but the current draft lacks a natural anchor. Propose a new, unhurried sentence (12-20 words) that introduces the topic and fits naturally into the article's flow.
+
+JSON SCHEMA:
+{
+  "opportunities": [{
+    "linkId": "string",
+    "linkTitle": "string",
+    "linkUrl": "string",
+    "destinationType": "article|shop_guide|product|category",
+    "workflowType": "match_existing|suggest_new",
+    "targetPassage": "VERBATIM existing sentence (for match_existing) OR the proposed new sentence (for suggest_new)",
+    "suggestedAnchor": "The exact phrase to link within targetPassage",
+    "contextSentence": "For suggest_new: the exact existing sentence in the draft AFTER WHICH the new sentence should be inserted",
+    "reason": "Editorial justification",
+    "seoRationale": "Search intent match",
+    "relevance": "high|medium"
+  }],
+  "rationale": "Overall strategy"
+}`;
+
+      const userPrompt = `PROJECT: "${projectTitle}"
+DOC:
+"""
+${documentContent}
+"""
+
+LIBRARY:
+${JSON.stringify(activeLinks)}`;
 
       const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
@@ -574,20 +605,25 @@ export async function handleApiRequest(
         throw new Error('Model did not return link opportunities array');
       }
 
-      const sanitized = opportunitiesList.map((o: any, idx: number) => ({
-        id: `opp-${Date.now()}-${idx}`,
-        linkId: o.linkId || `link-${idx}`,
-        linkTitle: o.linkTitle || 'Science of Gifts Destination',
-        linkUrl: o.linkUrl || '',
-        destinationType: o.destinationType || 'article',
-        targetPassage: o.targetPassage || '',
-        suggestedAnchor: o.suggestedAnchor || '',
-        reason: o.reason || 'Contextual reference providing value to the reader.',
-        seoRationale: o.seoRationale || 'Matches search intent.',
-        previewText: o.previewText || (o.targetPassage && o.suggestedAnchor ? o.targetPassage.replace(o.suggestedAnchor, `[${o.suggestedAnchor}]`) : undefined),
-        relevance: o.relevance || 'high',
-        status: 'pending',
-      }));
+      const sanitized = opportunitiesList.map((o: any, idx: number) => {
+        const workflowType = o.workflowType === 'suggest_new' ? 'suggest_new' : 'match_existing';
+        return {
+          id: `opp-${Date.now()}-${idx}`,
+          linkId: o.linkId || `link-${idx}`,
+          linkTitle: o.linkTitle || 'Science of Gifts Destination',
+          linkUrl: o.linkUrl || '',
+          destinationType: o.destinationType || 'article',
+          workflowType,
+          targetPassage: o.targetPassage || '',
+          suggestedAnchor: o.suggestedAnchor || '',
+          contextSentence: o.contextSentence || '',
+          reason: o.reason || 'Contextual reference providing value to the reader.',
+          seoRationale: o.seoRationale || 'Matches search intent.',
+          previewText: o.previewText || (o.targetPassage && o.suggestedAnchor ? o.targetPassage.replace(o.suggestedAnchor, `[${o.suggestedAnchor}]`) : undefined),
+          relevance: o.relevance || 'high',
+          status: 'pending',
+        };
+      });
 
       return jsonResponse({
         ok: true,

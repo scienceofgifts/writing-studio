@@ -6,6 +6,13 @@
 
 import { ResearchStudy } from '../types/research';
 import { CitationRecommendation, CitedStudyReference } from '../types/citation';
+import { 
+  normalizePassageText, 
+  normalizePassageKey,
+  verifyTargetPassageInHtml as verifySharedTargetPassageInHtml,
+  buildHtmlToPlainIndex,
+  PassageMatchResult 
+} from './richText';
 
 /**
  * Formats authors into standard academic bibliographic style:
@@ -46,15 +53,10 @@ export function formatAuthorsBibliographic(authors?: string[] | string): string 
   return `${formatted[0]} et al.`;
 }
 
-export interface PassageVerificationResult {
-  status: 'unique_match' | 'not_found' | 'ambiguous';
-  matchCount: number;
+export interface PassageVerificationResult extends PassageMatchResult {
   canInsert: boolean;
-  reason?: string;
-  htmlStart?: number;
-  htmlEnd?: number;
-  insertAtHtmlIndex?: number;
   citationWindowHtml?: string;
+  insertAtHtmlIndex?: number;
 }
 
 /**
@@ -304,143 +306,9 @@ export function syncCitationsAndReferences(
   };
 }
 
-interface MappedPlainChar {
-  char: string;
-  htmlStart: number;
-  htmlEnd: number;
-}
-
-/**
- * Builds a character-level index mapping normalized plain text characters (with citation badges
- * and HTML tags stripped) back to their exact byte offsets in `bodyHtml`.
- */
-function buildBodyPlainIndex(bodyHtml: string): {
-  normText: string;
-  normMap: MappedPlainChar[];
-} {
-  const rawChars: MappedPlainChar[] = [];
-  let i = 0;
-  const len = bodyHtml.length;
-
-  const citationSupRegex =
-    /^<sup\b[^>]*\b(?:data-study-id|data-citation-study-id)=["'][^"']+["'][^>]*>[\s\S]*?<\/sup>/i;
-  const blockEndTagRegex = /^<\/(?:p|h[1-6]|li|blockquote|div|section|article)\b[^>]*>/i;
-  const brTagRegex = /^<br\b[^>]*\/?>/i;
-  const genericTagRegex = /^<[^>]+>/;
-  const entityRegex = /^&(#?\w+);/;
-
-  const decodeEntity = (ent: string): string => {
-    const lower = ent.toLowerCase();
-    if (lower === 'nbsp' || lower === '#160') return ' ';
-    if (lower === 'amp' || lower === '#38') return '&';
-    if (lower === 'lt' || lower === '#60') return '<';
-    if (lower === 'gt' || lower === '#62') return '>';
-    if (lower === 'quot' || lower === '#34') return '"';
-    if (lower === '#039' || lower === '#39' || lower === 'apos') return "'";
-    if (lower === 'mdash' || lower === '#8212') return '—';
-    if (lower === 'ndash' || lower === '#8211') return '–';
-    return ' ';
-  };
-
-  while (i < len) {
-    const rest = bodyHtml.slice(i);
-
-    // 1. Skip citation <sup data-study-id="...">...</sup> completely
-    const supMatch = rest.match(citationSupRegex);
-    if (supMatch) {
-      i += supMatch[0].length;
-      continue;
-    }
-
-    // 2. Block end tag -> emit newline separator so sentences across blocks do not merge
-    const blockMatch = rest.match(blockEndTagRegex) || rest.match(brTagRegex);
-    if (blockMatch) {
-      rawChars.push({ char: '\n', htmlStart: i, htmlEnd: i + blockMatch[0].length });
-      i += blockMatch[0].length;
-      continue;
-    }
-
-    // 3. Other HTML tags -> skip
-    const tagMatch = rest.match(genericTagRegex);
-    if (tagMatch) {
-      i += tagMatch[0].length;
-      continue;
-    }
-
-    // 4. HTML entities -> decode
-    if (bodyHtml[i] === '&') {
-      const entMatch = rest.match(entityRegex);
-      if (entMatch) {
-        const decoded = decodeEntity(entMatch[1]);
-        rawChars.push({ char: decoded, htmlStart: i, htmlEnd: i + entMatch[0].length });
-        i += entMatch[0].length;
-        continue;
-      }
-    }
-
-    // 5. Regular character
-    rawChars.push({ char: bodyHtml[i], htmlStart: i, htmlEnd: i + 1 });
-    i += 1;
-  }
-
-  // Collapse horizontal whitespace runs while preserving block boundary newlines
-  const normMap: MappedPlainChar[] = [];
-  for (const item of rawChars) {
-    if (item.char === '\n') {
-      if (normMap.length > 0 && normMap[normMap.length - 1].char === ' ') {
-        normMap[normMap.length - 1] = item;
-      } else if (normMap.length === 0 || normMap[normMap.length - 1].char !== '\n') {
-        normMap.push(item);
-      }
-    } else if (/\s/.test(item.char)) {
-      if (
-        normMap.length > 0 &&
-        normMap[normMap.length - 1].char !== ' ' &&
-        normMap[normMap.length - 1].char !== '\n'
-      ) {
-        normMap.push({ char: ' ', htmlStart: item.htmlStart, htmlEnd: item.htmlEnd });
-      }
-    } else {
-      normMap.push(item);
-    }
-  }
-
-  // Trim leading/trailing whitespace
-  while (normMap.length > 0 && /\s/.test(normMap[0].char)) {
-    normMap.shift();
-  }
-  while (normMap.length > 0 && /\s/.test(normMap[normMap.length - 1].char)) {
-    normMap.pop();
-  }
-
-  return {
-    normText: normMap.map((c) => c.char).join(''),
-    normMap,
-  };
-}
-
-/**
- * Normalizes a target passage string for deterministic comparison and deduplication.
- */
-export function normalizePassageText(passage: string): string {
-  if (!passage) return '';
-  return passage
-    .replace(/<sup\b[^>]*\b(?:data-study-id|data-citation-study-id)=["'][^"']+["'][^>]*>[\s\S]*?<\/sup>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#0?39;/gi, "'")
-    .replace(/\s*\[\d+\]\s*(?=[.!?]|$)/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-export function normalizePassageKey(passage: string): string {
-  return normalizePassageText(passage)
-    .toLowerCase()
-    .replace(/[.!?]+$/, '')
-    .trim();
+export interface PassageVerificationResult extends PassageMatchResult {
+  canInsert: boolean;
+  citationWindowHtml?: string;
 }
 
 /**
@@ -452,131 +320,53 @@ export function verifyTargetPassageInHtml(
   targetPassage: string
 ): PassageVerificationResult {
   const { bodyHtml } = splitBodyAndReferences(htmlContent || '');
-  const cleanTarget = normalizePassageText(targetPassage);
-
-  if (!cleanTarget || cleanTarget.length < 10) {
-    return {
-      status: 'not_found',
-      matchCount: 0,
-      canInsert: false,
-      reason: 'Target passage is empty or too short to match safely.',
-    };
-  }
-
-  const { normText, normMap } = buildBodyPlainIndex(bodyHtml);
-  if (!normText) {
-    return {
-      status: 'not_found',
-      matchCount: 0,
-      canInsert: false,
-      reason: 'Article body is empty.',
-    };
-  }
-
-  const findOccurrences = (needle: string, caseInsensitive: boolean): Array<{ start: number; end: number }> => {
-    const haystack = caseInsensitive ? normText.toLowerCase() : normText;
-    const search = caseInsensitive ? needle.toLowerCase() : needle;
-    if (!search) return [];
-
-    const results: Array<{ start: number; end: number }> = [];
-    let pos = 0;
-    while (pos <= haystack.length - search.length) {
-      const idx = haystack.indexOf(search, pos);
-      if (idx === -1) break;
-
-      const endIdx = idx + search.length;
-      const charBefore = idx > 0 ? haystack[idx - 1] : ' ';
-      const charAfter = endIdx < haystack.length ? haystack[endIdx] : ' ';
-      const startsAtWordBoundary = !/[a-z0-9]/i.test(charBefore) || !/[a-z0-9]/i.test(search[0]);
-      const endsAtWordBoundary =
-        !/[a-z0-9]/i.test(charAfter) || !/[a-z0-9]/i.test(search[search.length - 1]);
-
-      if (startsAtWordBoundary && endsAtWordBoundary) {
-        results.push({ start: idx, end: endIdx });
-      }
-      pos = idx + 1;
-    }
-    return results;
+  const match = verifySharedTargetPassageInHtml(bodyHtml, targetPassage);
+  
+  const result: PassageVerificationResult = {
+    ...match,
+    canInsert: match.status === 'unique_match',
   };
 
-  let matches = findOccurrences(cleanTarget, false);
-  if (matches.length === 0) {
-    matches = findOccurrences(cleanTarget, true);
+  if (match.status === 'not_found') {
+    result.reason = 'Target passage does not match any sentence in the current article text.';
+    return result;
   }
-  if (matches.length === 0 && /[.!?]+$/.test(cleanTarget)) {
-    const withoutPunct = cleanTarget.replace(/[.!?]+$/, '').trim();
-    if (withoutPunct.length >= 10) {
-      matches = findOccurrences(withoutPunct, false);
-      if (matches.length === 0) {
-        matches = findOccurrences(withoutPunct, true);
-      }
-    }
+  if (match.status === 'ambiguous') {
+    result.reason = `Target passage appears ${match.matchCount} times in the article and cannot be matched unambiguously.`;
+    return result;
   }
-
-  if (matches.length === 0) {
-    return {
-      status: 'not_found',
-      matchCount: 0,
-      canInsert: false,
-      reason: 'Target passage does not match any sentence in the current article text.',
-    };
-  }
-
-  if (matches.length > 1) {
-    return {
-      status: 'ambiguous',
-      matchCount: matches.length,
-      canInsert: false,
-      reason: `Target passage appears ${matches.length} times in the article and cannot be matched unambiguously.`,
-    };
-  }
-
-  const match = matches[0];
-  const firstChar = normMap[match.start];
-  const lastChar = normMap[match.end - 1];
 
   // Determine exact HTML insertion index (before terminal sentence punctuation if present)
+  const { normMap } = buildHtmlToPlainIndex(bodyHtml);
+  const cleanTarget = normalizePassageText(targetPassage);
+  const normText = normMap.map(c => c.char).join('');
+  const findIdx = normText.indexOf(cleanTarget);
+  
+  const firstChar = normMap[findIdx];
+  const lastChar = normMap[findIdx + cleanTarget.length - 1];
   let insertAtHtmlIndex = lastChar.htmlEnd;
-  let postMatchBoundaryHtml = lastChar.htmlEnd;
 
   if (/[.!?]/.test(lastChar.char)) {
     insertAtHtmlIndex = lastChar.htmlStart;
-    postMatchBoundaryHtml = lastChar.htmlEnd;
-  } else if (match.end < normMap.length && /[.!?]/.test(normMap[match.end].char)) {
-    insertAtHtmlIndex = normMap[match.end].htmlStart;
-    postMatchBoundaryHtml = normMap[match.end].htmlEnd;
+  } else if (findIdx + cleanTarget.length < normMap.length && /[.!?]/.test(normMap[findIdx + cleanTarget.length].char)) {
+    insertAtHtmlIndex = normMap[findIdx + cleanTarget.length].htmlStart;
   } else {
     // Advance past any immediately closing inline tags (</em>, </strong>, </a>, </span>)
     const afterSlice = bodyHtml.slice(insertAtHtmlIndex);
     const closingInlineMatch = afterSlice.match(/^(?:<\/(?:em|strong|i|b|u|a|span|code)>)+/i);
     if (closingInlineMatch) {
       insertAtHtmlIndex += closingInlineMatch[0].length;
-      postMatchBoundaryHtml = insertAtHtmlIndex;
     }
   }
 
-  // Also capture any trailing citation <sup ...> tags immediately after postMatchBoundaryHtml
-  const nextPlainCharHtmlStart =
-    match.end < normMap.length
-      ? normMap[match.end]. char && /[.!?]/.test(normMap[match.end].char) && match.end + 1 < normMap.length
-        ? normMap[match.end + 1].htmlStart
-        : normMap[match.end].htmlStart
-      : bodyHtml.length;
-
-  const citationWindowHtml = bodyHtml.slice(
-    firstChar.htmlStart,
-    Math.max(postMatchBoundaryHtml, nextPlainCharHtmlStart)
+  const lookaheadSize = 100;
+  result.insertAtHtmlIndex = insertAtHtmlIndex;
+  result.citationWindowHtml = bodyHtml.slice(
+    Math.max(0, firstChar.htmlStart - 20),
+    Math.min(bodyHtml.length, lastChar.htmlEnd + lookaheadSize)
   );
 
-  return {
-    status: 'unique_match',
-    matchCount: 1,
-    canInsert: true,
-    htmlStart: firstChar.htmlStart,
-    htmlEnd: lastChar.htmlEnd,
-    insertAtHtmlIndex,
-    citationWindowHtml,
-  };
+  return result;
 }
 
 /**

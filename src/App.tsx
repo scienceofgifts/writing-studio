@@ -56,7 +56,12 @@ import {
 } from './services/versionHistoryService';
 import { ensureSemanticHtml } from './utils/richText';
 import { reconcileNotesWithHtmlContent } from './utils/editingNotes';
-import { applyHyperlinkToHtml, isValidUrl, isUrlAlreadyInDocument } from './utils/urlUtils';
+import { 
+  applyHyperlinkToHtml, 
+  isValidUrl, 
+  isUrlAlreadyInDocument, 
+  insertSentenceAfterContext 
+} from './utils/urlUtils';
 import { applyTheme } from './theme/tokens';
 import { useDocumentSearch } from './utils/useDocumentSearch';
 import { IdeaGeneratorView } from './components/IdeaGeneratorView';
@@ -1221,18 +1226,31 @@ export default function App() {
       return;
     }
 
-    const res = applyHyperlinkToHtml(
-      activeProject.content,
-      opp.suggestedAnchor,
-      opp.linkUrl,
-      opp.targetPassage
-    );
+    let res: { updatedHtml: string; applied: boolean };
+
+    if (opp.workflowType === 'suggest_new' && opp.contextSentence) {
+      res = insertSentenceAfterContext(
+        activeProject.content,
+        opp.contextSentence,
+        opp.targetPassage, // Verbatim new sentence
+        opp.linkUrl,
+        opp.suggestedAnchor // Anchor text within the new sentence
+      );
+    } else {
+      res = applyHyperlinkToHtml(
+        activeProject.content,
+        opp.suggestedAnchor,
+        opp.linkUrl,
+        opp.targetPassage
+      );
+    }
 
     if (!res.applied || !isUrlAlreadyInDocument(opp.linkUrl, res.updatedHtml)) {
-      toast.error(
-        'Insertion Not Applied',
-        `Could not locate the passage or anchor "${opp.suggestedAnchor}" in the current draft. Please verify the draft text.`
-      );
+      const errorMsg = opp.workflowType === 'suggest_new' 
+        ? `Could not locate the context sentence to insert the new link. Please verify the draft text.`
+        : `Could not locate the passage or anchor "${opp.suggestedAnchor}" in the current draft. Please verify the draft text.`;
+      
+      toast.error('Insertion Not Applied', errorMsg);
       return;
     }
 

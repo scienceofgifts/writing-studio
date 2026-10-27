@@ -45,9 +45,11 @@ export function verifyOpportunityLocation(
   contentHtml: string,
   editor?: any
 ): LocationVerificationResult {
+  const isSuggestNew = opp.workflowType === 'suggest_new';
   const targetUrl = opp.linkUrl || '';
   const targetAnchor = (opp.suggestedAnchor || '').trim().toLowerCase();
   const targetPassage = (opp.targetPassage || '').trim().toLowerCase();
+  const contextSentence = (opp.contextSentence || '').trim().toLowerCase();
   const normTargetUrl = normalizeUrlForComparison(targetUrl);
 
   const getParentBlockText = (doc: any, pos: number): string => {
@@ -115,62 +117,31 @@ export function verifyOpportunityLocation(
     return { from, to, text };
   };
 
-  if (editor?.state?.doc) {
-    const doc = editor.state.doc;
-    const candidates: Array<{
-      from: number;
-      to: number;
-      text: string;
-      score: number;
-      matchType: 'link_mark_and_anchor' | 'link_mark_only' | 'anchor_text_only';
-    }> = [];
-    const visitedRanges = new Set<string>();
-
-    doc.descendants((node: any, pos: number) => {
-      if (node.isText && node.text) {
-        const linkMark = node.marks?.find((m: any) => m.type.name === 'link' && m.attrs?.href);
-        if (linkMark) {
-          const markUrl = normalizeUrlForComparison(linkMark.attrs.href);
-          const isUrlMatch = normTargetUrl && markUrl === normTargetUrl;
-
-          if (isUrlMatch) {
-            const range = expandLinkRange(doc, pos, linkMark);
-            const rangeKey = `${range.from}-${range.to}`;
-
-            if (!visitedRanges.has(rangeKey)) {
-              visitedRanges.add(rangeKey);
-              let score = 100;
-
-              const parentText = getParentBlockText(doc, pos);
-              const linkText = range.text.toLowerCase();
-
-              if (targetAnchor && linkText.includes(targetAnchor)) {
-                score += 50;
-              }
-              if (
-                targetPassage &&
-                (parentText.includes(targetPassage.slice(0, 30)) || targetPassage.includes(linkText))
-              ) {
-                score += 30;
-              }
-
-              candidates.push({
-                from: range.from,
-                to: range.to,
-                text: range.text,
-                score,
-                matchType:
-                  targetAnchor && linkText.includes(targetAnchor)
-                    ? 'link_mark_and_anchor'
-                    : 'link_mark_only',
-              });
-            }
-          }
-        }
+  // If already accepted/inserted, we only verify the presence of the URL
+  if (opp.status === 'accepted') {
+    if (contentHtml) {
+      const urlsInHtml = extractUrlsFromHtml(contentHtml);
+      const hasMatchingUrlInHtml =
+        normTargetUrl && urlsInHtml.some((u) => normalizeUrlForComparison(u) === normTargetUrl);
+      if (hasMatchingUrlInHtml) {
+        return { isVerified: true, reason: 'Link verified in document.' };
       }
-    });
+    }
+  }
 
-    if (candidates.length === 0 && targetAnchor) {
+  // Workflow A: match_existing
+  if (!isSuggestNew) {
+    if (editor?.state?.doc) {
+      const doc = editor.state.doc;
+      const candidates: Array<{
+        from: number;
+        to: number;
+        text: string;
+        score: number;
+        matchType: 'link_mark_and_anchor' | 'link_mark_only' | 'anchor_text_only';
+      }> = [];
+      const visitedRanges = new Set<string>();
+
       doc.descendants((node: any, pos: number) => {
         if (node.isText && node.text) {
           const nodeText = node.text.toLowerCase();
@@ -184,7 +155,7 @@ export function verifyOpportunityLocation(
               visitedRanges.add(rangeKey);
               let score = 30;
               const parentText = getParentBlockText(doc, pos);
-              if (targetPassage && parentText.includes(targetPassage.slice(0, 30))) {
+              if (targetPassage && (parentText.includes(targetPassage.slice(0, 30)) || targetPassage.includes(parentText))) {
                 score += 40;
               }
 
@@ -200,40 +171,61 @@ export function verifyOpportunityLocation(
           }
         }
       });
+
+      candidates.sort((a, b) => b.score - a.score);
+
+      if (candidates.length > 0) {
+        return {
+          isVerified: true,
+          reason: 'Existing anchor verified in draft.',
+          candidate: candidates[0],
+        };
+      }
     }
 
-    candidates.sort((a, b) => b.score - a.score);
-
-    if (candidates.length > 0) {
-      const bestMatch = candidates[0];
-      return {
-        isVerified: true,
-        reason: 'Location verified in draft document.',
-        candidate: bestMatch,
-      };
+    if (contentHtml) {
+      const plainText = contentHtml.replace(/<[^>]+>/g, ' ').toLowerCase();
+      if (targetAnchor && plainText.includes(targetAnchor)) {
+        return { isVerified: true, reason: 'Existing anchor verified in saved content.' };
+      }
     }
-  }
+  } 
+  
+  // Workflow B: suggest_new
+  else {
+    if (editor?.state?.doc) {
+      const doc = editor.state.doc;
+      let foundContext = false;
+      let candidate: any = null;
 
-  if (contentHtml) {
-    const urlsInHtml = extractUrlsFromHtml(contentHtml);
-    const hasMatchingUrlInHtml =
-      normTargetUrl && urlsInHtml.some((u) => normalizeUrlForComparison(u) === normTargetUrl);
-    const plainText = contentHtml.replace(/<[^>]+>/g, ' ').toLowerCase();
-    const hasAnchorInHtml = targetAnchor && plainText.includes(targetAnchor);
+      doc.descendants((node: any, pos: number) => {
+        if (node.isText && node.text) {
+          const nodeText = node.text.toLowerCase();
+          if (contextSentence && nodeText.includes(contextSentence.slice(0, 40))) {
+            foundContext = true;
+            candidate = { from: pos, to: pos + node.text.length, text: node.text };
+          }
+        }
+      });
 
-    if (hasMatchingUrlInHtml || hasAnchorInHtml) {
-      return {
-        isVerified: true,
-        reason: 'Location verified in saved article content.',
-      };
+      if (foundContext) {
+        return { isVerified: true, reason: 'Context sentence verified in draft.', candidate };
+      }
+    }
+
+    if (contentHtml) {
+      const plainText = contentHtml.replace(/<[^>]+>/g, ' ').toLowerCase();
+      if (contextSentence && plainText.includes(contextSentence.slice(0, 40))) {
+        return { isVerified: true, reason: 'Context sentence verified in saved content.' };
+      }
     }
   }
 
   return {
     isVerified: false,
-    reason: targetAnchor
-      ? `Neither the hyperlink ("${targetUrl}") nor anchor phrase ("${targetAnchor}") could be located in the current draft.`
-      : `The hyperlink ("${targetUrl}") could not be located in the current draft.`,
+    reason: isSuggestNew
+      ? `Could not locate context sentence: "${contextSentence.slice(0, 60)}..."`
+      : `Could not locate existing anchor: "${targetAnchor}"`,
   };
 }
 
@@ -576,32 +568,57 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
                     </div>
 
                     {/* Passage, Proposed Anchor, and Sentence Preview */}
-                    <div className="p-3 bg-[#faf9f6] border border-[#ede7db] rounded-lg space-y-2">
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] block mb-0.5">
-                          Document Passage
-                        </span>
-                        <p className="font-editorial text-xs text-[#2b251d] leading-relaxed italic">
-                          "{opp.targetPassage}"
-                        </p>
-                      </div>
+                    <div className="p-3 bg-[#faf9f6] border border-[#ede7db] rounded-lg space-y-3">
+                      {opp.workflowType === 'suggest_new' ? (
+                        <>
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] flex items-center gap-1">
+                              <BookOpen className="w-3 h-3 text-amber-700" />
+                              <span>Insert After Context</span>
+                            </span>
+                            <p className="font-editorial text-[11px] text-[#736c61] leading-relaxed italic border-l-2 border-amber-200 pl-2">
+                              "...{opp.contextSentence}"
+                            </p>
+                          </div>
 
-                      <div className="flex items-center gap-1.5 text-[11px] text-[#1e232a] pt-1.5 border-t border-[#f0ece1]">
-                        <strong className="text-[#5c5447]">Proposed Anchor:</strong>
-                        <span className="px-1.5 py-0.5 rounded-sm bg-blue-100 text-blue-950 font-semibold underline decoration-blue-500">
-                          {opp.suggestedAnchor}
-                        </span>
-                      </div>
+                          <div className="space-y-1 pt-2 border-t border-[#f0ece1]">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] flex items-center gap-1">
+                              <Sparkles className="w-3 h-3 text-blue-700" />
+                              <span>Proposed New Sentence</span>
+                            </span>
+                            <div className="font-editorial text-xs text-[#1e232a] bg-white p-2.5 rounded-md border border-blue-100 shadow-sm leading-relaxed">
+                              {renderSentencePreview(opp.targetPassage, opp.suggestedAnchor)}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] block">
+                              Existing Document Passage
+                            </span>
+                            <p className="font-editorial text-xs text-[#2b251d] leading-relaxed italic">
+                              "{opp.targetPassage}"
+                            </p>
+                          </div>
 
-                      {/* Sentence Preview with Anchor Inserted */}
-                      <div className="pt-1.5 border-t border-[#f0ece1] text-[11px] space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] block">
-                          Sentence Preview
-                        </span>
-                        <p className="font-editorial text-xs text-[#1e232a] bg-white p-2.5 rounded-md border border-[#ede7db] leading-relaxed">
-                          {renderSentencePreview(opp.targetPassage, opp.suggestedAnchor, opp.previewText)}
-                        </p>
-                      </div>
+                          <div className="flex items-center gap-1.5 text-[11px] text-[#1e232a] pt-1.5 border-t border-[#f0ece1]">
+                            <strong className="text-[#5c5447]">Proposed Anchor:</strong>
+                            <span className="px-1.5 py-0.5 rounded-sm bg-blue-100 text-blue-950 font-semibold underline decoration-blue-500">
+                              {opp.suggestedAnchor}
+                            </span>
+                          </div>
+
+                          <div className="pt-1.5 border-t border-[#f0ece1] text-[11px] space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] block">
+                              Sentence Preview
+                            </span>
+                            <p className="font-editorial text-xs text-[#1e232a] bg-white p-2.5 rounded-md border border-[#ede7db] leading-relaxed">
+                              {renderSentencePreview(opp.targetPassage, opp.suggestedAnchor, opp.previewText)}
+                            </p>
+                          </div>
+                        </>
+                      )}
 
                       {opp.minimalRevision && (
                         <div className="p-2 bg-amber-50/90 border border-amber-200 rounded text-[11px] text-amber-950">
@@ -779,6 +796,8 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
                   <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447]">
                     {viewingLocationOpp.status === 'accepted'
                       ? 'Verified Inserted Link Location'
+                      : viewingLocationOpp.workflowType === 'suggest_new'
+                      ? 'Proposed Insertion Point (After this sentence)'
                       : 'Proposed Insertion Passage'}
                   </span>
                   <span
@@ -800,11 +819,13 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
 
                 <div className="p-3 bg-white border border-[#dcd6ca] rounded-xl space-y-2">
                   <p className="font-editorial text-xs text-[#2b251d] leading-relaxed italic">
-                    "{viewingLocationOpp.targetPassage || viewingLocationOpp.suggestedAnchor}"
+                    "{viewingLocationOpp.workflowType === 'suggest_new' 
+                      ? viewingLocationOpp.contextSentence 
+                      : viewingLocationOpp.targetPassage || viewingLocationOpp.suggestedAnchor}"
                   </p>
                   <div className="pt-2 border-t border-[#f0ede6] flex items-center justify-between text-[11px]">
                     <span className="text-[#5c5447]">
-                      <strong>Target Anchor:</strong> {viewingLocationOpp.suggestedAnchor}
+                      <strong>{viewingLocationOpp.workflowType === 'suggest_new' ? 'New Anchor:' : 'Target Anchor:'}</strong> {viewingLocationOpp.suggestedAnchor}
                     </span>
                     <span className="font-mono text-blue-800 truncate max-w-[200px]">
                       {viewingLocationOpp.linkUrl}
