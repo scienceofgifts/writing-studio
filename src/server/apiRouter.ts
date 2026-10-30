@@ -6,6 +6,7 @@
 
 import { GoogleGenAI } from '@google/genai';
 import { extractText } from 'unpdf';
+import { fetchUrlMetadata, fetchProductUrlMetadata } from './urlMetadata';
 
 export interface RouterEnv {
   GEMINI_API_KEY?: string;
@@ -907,60 +908,16 @@ ${JSON.stringify(study, null, 2)}`;
       if (!inputUrl || typeof inputUrl !== 'string' || !inputUrl.trim()) {
         throw new Error('URL is required for link metadata');
       }
-      const targetUrl = inputUrl.trim();
-      const fetchRes = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-      });
 
-      if (!fetchRes.ok) {
-        throw new Error(`Failed to fetch target URL (Status: ${fetchRes.status})`);
+      let targetUrl = inputUrl.trim();
+      if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = `https://${targetUrl}`;
       }
 
-      const html = await fetchRes.text();
-      const getMeta = (names: string[]) => {
-        for (const name of names) {
-          const regex = new RegExp(`<meta\\s+(?:name|property|itemprop)=["']${name}["']\\s+content=["']([^"']+)["']`, 'i');
-          const m = html.match(regex);
-          if (m && m[1]) return m[1].trim();
-        }
-        return '';
-      };
-
-      const rawTitle = getMeta(['og:title', 'twitter:title', 'title']) ||
-        (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() || 'Science of Gifts Article');
-      const cleanTitle = rawTitle.replace(/\s*(?:\||–|—|-)\s*(?:Science of Gifts|Blog|Home|Shop|Store).*$/i, '').trim();
-
-      let description = getMeta(['description', 'og:description', 'twitter:description']);
-      if (!description && html) {
-        const pMatch = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-        if (pMatch && pMatch[1]) {
-          description = pMatch[1].replace(/<[^>]+>/g, '').trim().slice(0, 220);
-        }
-      }
-
-      const preferredAnchor = cleanTitle.toLowerCase().replace(/^(the|an?)\s+/i, '').split(/\s+/).slice(0, 6).join(' ');
-
-      let category = 'Editorial';
-      if (Array.isArray(existingCategories) && existingCategories.length > 0) {
-        const foundCat = existingCategories.find((c: string) => cleanTitle.toLowerCase().includes(c.toLowerCase()));
-        if (foundCat) category = foundCat;
-      }
-
+      const metadata = await fetchUrlMetadata(targetUrl, existingCategories, env.GEMINI_API_KEY);
       return jsonResponse({
         ok: true,
-        metadata: {
-          title: cleanTitle || 'Destination Article',
-          description: description || 'Editorial article in Science of Gifts Library.',
-          topic: cleanTitle,
-          category,
-          destinationType: targetUrl.includes('/products/') ? 'product' : targetUrl.includes('/collections/') || targetUrl.includes('/pages/') ? 'shop_guide' : 'article',
-          preferredAnchor: preferredAnchor || 'editorial guide',
-          notes: `Contextual link destination: ${cleanTitle}`,
-          resolvedUrl: targetUrl,
-        },
+        metadata,
       });
     }
 
@@ -970,68 +927,23 @@ ${JSON.stringify(study, null, 2)}`;
       if (!inputUrl || typeof inputUrl !== 'string' || !inputUrl.trim()) {
         throw new Error('Product URL is required');
       }
-      const targetUrl = inputUrl.trim();
-      const fetchRes = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
+
+      let targetUrl = inputUrl.trim();
+      if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = `https://${targetUrl}`;
+      }
+
+      const metadata = await fetchProductUrlMetadata(targetUrl, {
+        topic: guideTopic,
+        audience: guideAudience,
       });
-
-      if (!fetchRes.ok) {
-        throw new Error(`Failed to fetch product URL (Status: ${fetchRes.status})`);
-      }
-
-      const html = await fetchRes.text();
-      const getMeta = (names: string[]) => {
-        for (const name of names) {
-          const regex = new RegExp(`<meta\\s+(?:name|property|itemprop)=["']${name}["']\\s+content=["']([^"']+)["']`, 'i');
-          const m = html.match(regex);
-          if (m && m[1]) return m[1].trim();
-        }
-        return '';
-      };
-
-      let productName = getMeta(['og:title', 'twitter:title']) || (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() || '');
-      productName = productName.replace(/\s*(?:\||–|—|-)\s*(?:Science of Gifts|Shop|Store).*$/i, '').trim();
-
-      let imageUrl = getMeta(['og:image', 'twitter:image']);
-      let summary = getMeta(['description', 'og:description', 'twitter:description']);
-      let materials = '';
-      let productType = 'Curated Instrument';
-
-      const jsonLdMatch = html.match(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
-      if (jsonLdMatch && jsonLdMatch[1]) {
-        try {
-          const json = JSON.parse(jsonLdMatch[1]);
-          const item = Array.isArray(json) ? json[0] : (json['@graph'] ? json['@graph'].find((g: any) => g['@type'] === 'Product') : json);
-          if (item) {
-            if (item.name) productName = item.name;
-            if (item.description) summary = item.description;
-            if (item.image) imageUrl = typeof item.image === 'string' ? item.image : (Array.isArray(item.image) ? item.image[0] : item.image?.url);
-            if (item.material) materials = Array.isArray(item.material) ? item.material.join(', ') : String(item.material);
-            if (item.category) productType = item.category;
-          }
-        } catch {}
-      }
 
       return jsonResponse({
         ok: true,
-        metadata: {
-          name: productName || 'Curated Product',
-          productType,
-          summary: summary || 'Curated item from Science of Gifts collection.',
-          materialDetails: materials || 'Traditional honest materials',
-          historicalContext: 'Rooted in proven workshop heritage.',
-          designDetails: 'Solid construction and tactile finish.',
-          whyItFits: `Complements ${guideTopic || 'the curated gift collection'} with authentic quality.`,
-          bestFor: `Discerning recipients and ${guideAudience || 'enthusiasts'} seeking lasting utility.`,
-          buyerConsiderations: 'Simple maintenance ensures decades of service.',
-          imageUrl: imageUrl || '',
-          resolvedUrl: targetUrl,
-        },
+        metadata,
       });
     }
+
 
     // 17. POST /api/products/analyze-research
     if (path === '/api/products/analyze-research' && request.method === 'POST') {

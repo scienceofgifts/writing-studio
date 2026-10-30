@@ -125,6 +125,22 @@ export interface MappedPlainChar {
 }
 
 /**
+ * Decodes common HTML entities into their plain text equivalents.
+ */
+export const decodeEntity = (ent: string): string => {
+  const lower = ent.toLowerCase();
+  if (lower === 'nbsp' || lower === '#160') return ' ';
+  if (lower === 'amp' || lower === '#38') return '&';
+  if (lower === 'lt' || lower === '#60') return '<';
+  if (lower === 'gt' || lower === '#62') return '>';
+  if (lower === 'quot' || lower === '#34') return '"';
+  if (lower === '#039' || lower === '#39' || lower === 'apos') return "'";
+  if (lower === 'mdash' || lower === '#8212') return '—';
+  if (lower === 'ndash' || lower === '#8211') return '–';
+  return ' ';
+};
+
+/**
  * Builds a character-level index mapping normalized plain text characters (with formatting tags stripped)
  * back to their exact byte offsets in the source HTML string.
  */
@@ -142,19 +158,6 @@ export function buildHtmlToPlainIndex(html: string): {
   const brTagRegex = /^<br\b[^>]*\/?>/i;
   const genericTagRegex = /^<[^>]+>/;
   const entityRegex = /^&(#?\w+);/;
-
-  const decodeEntity = (ent: string): string => {
-    const lower = ent.toLowerCase();
-    if (lower === 'nbsp' || lower === '#160') return ' ';
-    if (lower === 'amp' || lower === '#38') return '&';
-    if (lower === 'lt' || lower === '#60') return '<';
-    if (lower === 'gt' || lower === '#62') return '>';
-    if (lower === 'quot' || lower === '#34') return '"';
-    if (lower === '#039' || lower === '#39' || lower === 'apos') return "'";
-    if (lower === 'mdash' || lower === '#8212') return '—';
-    if (lower === 'ndash' || lower === '#8211') return '–';
-    return ' ';
-  };
 
   while (i < len) {
     const rest = html.slice(i);
@@ -355,31 +358,15 @@ export interface PassageMatchResult {
 }
 
 /**
- * Verifies that a target passage exists unambiguously in the HTML.
- * Correctly handles matching across formatting tags (strong, em, etc.).
+ * Robustly finds occurrences of a query string in normalized text,
+ * handling case sensitivity, word boundaries, and terminal punctuation.
  */
-export function verifyTargetPassageInHtml(
-  html: string,
-  targetPassage: string
-): PassageMatchResult {
-  const cleanTarget = normalizePassageText(targetPassage);
-
-  if (!cleanTarget || cleanTarget.length < 10) {
-    return {
-      status: 'not_found',
-      matchCount: 0,
-      reason: 'Target passage is empty or too short to match safely.',
-    };
-  }
-
-  const { normText, normMap } = buildHtmlToPlainIndex(html || '');
-  if (!normText) {
-    return {
-      status: 'not_found',
-      matchCount: 0,
-      reason: 'Content is empty.',
-    };
-  }
+export function findPassageMatches(
+  normText: string,
+  query: string
+): Array<{ start: number; end: number }> {
+  const cleanTarget = normalizePassageText(query);
+  if (!cleanTarget || cleanTarget.length < 2) return [];
 
   const findOccurrences = (needle: string, caseInsensitive: boolean): Array<{ start: number; end: number }> => {
     const haystack = caseInsensitive ? normText.toLowerCase() : normText;
@@ -415,13 +402,45 @@ export function verifyTargetPassageInHtml(
   // Try matching without terminal punctuation if not found
   if (matches.length === 0 && /[.!?]+$/.test(cleanTarget)) {
     const withoutPunct = cleanTarget.replace(/[.!?]+$/, '').trim();
-    if (withoutPunct.length >= 10) {
+    if (withoutPunct.length >= 5) {
       matches = findOccurrences(withoutPunct, false);
       if (matches.length === 0) {
         matches = findOccurrences(withoutPunct, true);
       }
     }
   }
+
+  return matches;
+}
+
+/**
+ * Verifies that a target passage exists unambiguously in the HTML.
+ * Correctly handles matching across formatting tags (strong, em, etc.).
+ */
+export function verifyTargetPassageInHtml(
+  html: string,
+  targetPassage: string
+): PassageMatchResult {
+  const cleanTarget = normalizePassageText(targetPassage);
+
+  if (!cleanTarget || cleanTarget.length < 5) {
+    return {
+      status: 'not_found',
+      matchCount: 0,
+      reason: 'Target passage is empty or too short to match safely.',
+    };
+  }
+
+  const { normText, normMap } = buildHtmlToPlainIndex(html || '');
+  if (!normText) {
+    return {
+      status: 'not_found',
+      matchCount: 0,
+      reason: 'Content is empty.',
+    };
+  }
+
+  const matches = findPassageMatches(normText, cleanTarget);
 
   if (matches.length === 0) {
     return {

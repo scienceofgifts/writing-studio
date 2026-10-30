@@ -7,7 +7,8 @@ import {
   buildHtmlToPlainIndex, 
   normalizePassageText, 
   verifyTargetPassageInHtml,
-  expandHtmlRangeToBalancedTags
+  expandHtmlRangeToBalancedTags,
+  findPassageMatches
 } from './richText';
 
 const TRACKING_PARAMS = new Set([
@@ -174,22 +175,26 @@ export function applyHyperlinkToHtml(
   let targetEnd = -1;
 
   if (targetPassage && targetPassage.trim()) {
-    const normalizedPassage = normalizePassageText(targetPassage);
-    const passageStart = plainText.indexOf(normalizedPassage);
+    const matches = findPassageMatches(plainText, targetPassage);
     
-    if (passageStart !== -1) {
-      // Find the anchor within the passage
-      const anchorInPassageOffset = normalizedPassage.indexOf(normalizedAnchor);
-      if (anchorInPassageOffset !== -1) {
-        targetStart = passageStart + anchorInPassageOffset;
-        targetEnd = targetStart + normalizedAnchor.length;
+    if (matches.length > 0) {
+      // Find the first match that contains the anchor
+      for (const match of matches) {
+        const passageText = plainText.substring(match.start, match.end);
+        const anchorMatches = findPassageMatches(passageText, anchorText);
+        if (anchorMatches.length > 0) {
+          targetStart = match.start + anchorMatches[0].start;
+          targetEnd = targetStart + (anchorMatches[0].end - anchorMatches[0].start);
+          break;
+        }
       }
     }
   } else {
     // Search globally for the first instance of the anchor
-    targetStart = plainText.indexOf(normalizedAnchor);
-    if (targetStart !== -1) {
-      targetEnd = targetStart + normalizedAnchor.length;
+    const matches = findPassageMatches(plainText, anchorText);
+    if (matches.length > 0) {
+      targetStart = matches[0].start;
+      targetEnd = matches[0].end;
     }
   }
 
@@ -221,6 +226,67 @@ export function applyHyperlinkToHtml(
 }
 
 /**
+ * Replaces an existing sentence with a revised version and applies a hyperlink to an anchor within it.
+ * Used for "revise_existing" internal link workflows.
+ */
+export function reviseSentenceInHtml(
+  html: string,
+  originalPassage: string,
+  revisedSentence: string,
+  url: string,
+  anchorText: string
+): { updatedHtml: string; applied: boolean } {
+  if (!html || !originalPassage || !revisedSentence || !url || !anchorText) {
+    return { updatedHtml: html, applied: false };
+  }
+
+  // Idempotency: don't add the same URL twice if it's already in the doc
+  if (isUrlAlreadyInDocument(url, html)) {
+    return { updatedHtml: html, applied: false };
+  }
+
+  const cleanHref = cleanTrackingParameters(url);
+  const normalizedOriginal = normalizePassageText(originalPassage);
+  
+  const { normText, normMap } = buildHtmlToPlainIndex(html);
+  
+  const matches = findPassageMatches(normText, originalPassage);
+  if (matches.length === 0) {
+    return { updatedHtml: html, applied: false };
+  }
+
+  // Check for ambiguity
+  if (matches.length > 1) {
+    console.warn('Ambiguous original passage for revision');
+    return { updatedHtml: html, applied: false };
+  }
+
+  const match = matches[0];
+  const originalStart = match.start;
+  const originalEndPlain = match.end;
+  let htmlStart = normMap[originalStart].htmlStart;
+  let htmlEnd = normMap[originalEndPlain - 1].htmlEnd;
+
+  // Expand to balanced tags to ensure we replace the whole block if needed (e.g. <strong>Original</strong>)
+  const expanded = expandHtmlRangeToBalancedTags(html, htmlStart, htmlEnd);
+  htmlStart = expanded.start;
+  htmlEnd = expanded.end;
+
+  // Format the revised sentence with the link
+  const linkedSentence = revisedSentence.replace(
+    anchorText, 
+    `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${anchorText}</a>`
+  );
+
+  const updatedHtml = 
+    html.substring(0, htmlStart) + 
+    linkedSentence + 
+    html.substring(htmlEnd);
+
+  return { updatedHtml, applied: true };
+}
+
+/**
  * Inserts a new sentence into the HTML immediately following a confirmed context sentence.
  * Used for "suggest_new" internal link workflows.
  */
@@ -235,24 +301,30 @@ export function insertSentenceAfterContext(
     return { updatedHtml: html, applied: false };
   }
 
+  // Idempotency: don't add the same URL twice if it's already in the doc
+  if (isUrlAlreadyInDocument(url, html)) {
+    return { updatedHtml: html, applied: false };
+  }
+
   const cleanHref = cleanTrackingParameters(url);
   const normalizedContext = normalizePassageText(contextSentence);
   
   const { normText, normMap } = buildHtmlToPlainIndex(html);
   const plainText = normText;
   
-  const contextStart = plainText.indexOf(normalizedContext);
-  if (contextStart === -1) {
+  const matches = findPassageMatches(plainText, contextSentence);
+  if (matches.length === 0) {
     return { updatedHtml: html, applied: false };
   }
 
   // Check for ambiguity (multiple matches)
-  if (plainText.indexOf(normalizedContext, contextStart + 1) !== -1) {
+  if (matches.length > 1) {
     console.warn('Ambiguous context sentence for link insertion');
     return { updatedHtml: html, applied: false };
   }
 
-  const contextEndPlain = contextStart + normalizedContext.length;
+  const match = matches[0];
+  const contextEndPlain = match.end;
   const htmlEnd = normMap[contextEndPlain - 1].htmlEnd;
 
   // We want to insert after the context sentence, but before any closing tags of the parent block if possible.
@@ -358,5 +430,31 @@ export function formatDestinationType(
     default:
       return 'Editorial Article';
   }
+}
+
+/**
+ * Validates a suggested URL against a set of known internal links.
+ * Returns the verified URL (potentially corrected from ID match) or null if invalid.
+ */
+export function validateInternalLinkUrl(
+  suggestedUrl: string,
+  linkId: string,
+  availableLinks: { id: string; url: string }[]
+): { validatedUrl: string | null; wasCorrected: boolean } {
+  if (!suggestedUrl) return { validatedUrl: null, wasCorrected: false };
+
+  // 1. Direct match by URL
+  const urlMatch = availableLinks.find(l => normalizeUrlForComparison(l.url) === normalizeUrlForComparison(suggestedUrl));
+  if (urlMatch) {
+    return { validatedUrl: urlMatch.url, wasCorrected: false };
+  }
+
+  // 2. Fallback to ID match (AI often gets ID right but hallucinates URL)
+  const idMatch = availableLinks.find(l => l.id === linkId);
+  if (idMatch) {
+    return { validatedUrl: idMatch.url, wasCorrected: true };
+  }
+
+  return { validatedUrl: null, wasCorrected: false };
 }
 

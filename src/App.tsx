@@ -60,8 +60,11 @@ import {
   applyHyperlinkToHtml, 
   isValidUrl, 
   isUrlAlreadyInDocument, 
-  insertSentenceAfterContext 
+  insertSentenceAfterContext,
+  reviseSentenceInHtml,
+  cleanTrackingParameters
 } from './utils/urlUtils';
+import { resolveLinkOpportunityLocation } from './utils/editorLinkUtils';
 import { applyTheme } from './theme/tokens';
 import { useDocumentSearch } from './utils/useDocumentSearch';
 import { IdeaGeneratorView } from './components/IdeaGeneratorView';
@@ -1218,7 +1221,9 @@ export default function App() {
       return;
     }
 
-    if (isUrlAlreadyInDocument(opp.linkUrl, activeProject.content)) {
+    const currentHtml = editorRef.current?.getHTML() || activeProject.content;
+
+    if (isUrlAlreadyInDocument(opp.linkUrl, currentHtml)) {
       toast.error(
         'Duplicate Link Prevented',
         `Destination "${opp.linkTitle}" (${opp.linkUrl}) is already linked in this article.`
@@ -1226,32 +1231,100 @@ export default function App() {
       return;
     }
 
-    let res: { updatedHtml: string; applied: boolean };
+    const editor = editorRef.current;
+    let appliedViaEditor = false;
+    let updatedHtml = activeProject.content;
 
-    if (opp.workflowType === 'suggest_new' && opp.contextSentence) {
-      res = insertSentenceAfterContext(
-        activeProject.content,
-        opp.contextSentence,
-        opp.targetPassage, // Verbatim new sentence
-        opp.linkUrl,
-        opp.suggestedAnchor // Anchor text within the new sentence
-      );
-    } else {
-      res = applyHyperlinkToHtml(
-        activeProject.content,
-        opp.suggestedAnchor,
-        opp.linkUrl,
-        opp.targetPassage
-      );
+    // TRY EDITOR COMMANDS FIRST (RELIABLE MATCHING & UNDO HISTORY)
+    if (editor && !editor.isDestroyed) {
+      const verification = resolveLinkOpportunityLocation(opp, currentHtml, editor);
+      if (verification.isVerified && verification.candidate) {
+        const { from, to } = verification.candidate;
+        const cleanHref = cleanTrackingParameters(opp.linkUrl);
+
+        try {
+          if (opp.workflowType === 'suggest_new') {
+            const linkedNewSentence = opp.targetPassage.replace(
+              opp.suggestedAnchor,
+              `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${opp.suggestedAnchor}</a>`
+            );
+            editor.chain()
+              .focus()
+              .insertContentAt(to, ' ' + linkedNewSentence)
+              .run();
+          } else if (opp.workflowType === 'revise_existing') {
+            const linkedRevisedSentence = (opp.proposedText || '').replace(
+              opp.suggestedAnchor,
+              `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${opp.suggestedAnchor}</a>`
+            );
+            editor.chain()
+              .focus()
+              .insertContentAt({ from, to }, linkedRevisedSentence)
+              .run();
+          } else {
+            // match_existing
+            editor.chain()
+              .focus()
+              .setTextSelection({ from, to })
+              .setLink({ href: cleanHref })
+              .run();
+          }
+          appliedViaEditor = true;
+          updatedHtml = editor.getHTML();
+        } catch (e) {
+          console.warn('Editor-based link insertion failed, falling back to HTML manipulation:', e);
+        }
+      }
     }
 
-    if (!res.applied || !isUrlAlreadyInDocument(opp.linkUrl, res.updatedHtml)) {
-      const errorMsg = opp.workflowType === 'suggest_new' 
-        ? `Could not locate the context sentence to insert the new link. Please verify the draft text.`
-        : `Could not locate the passage or anchor "${opp.suggestedAnchor}" in the current draft. Please verify the draft text.`;
-      
-      toast.error('Insertion Not Applied', errorMsg);
-      return;
+    // FALLBACK TO HTML MANIPULATION IF EDITOR FAILED OR UNAVAILABLE
+    if (!appliedViaEditor) {
+      let res: { updatedHtml: string; applied: boolean };
+
+      if (opp.workflowType === 'suggest_new' && opp.contextSentence) {
+        res = insertSentenceAfterContext(
+          activeProject.content,
+          opp.contextSentence,
+          opp.targetPassage,
+          opp.linkUrl,
+          opp.suggestedAnchor
+        );
+      } else if (opp.workflowType === 'revise_existing') {
+        res = reviseSentenceInHtml(
+          activeProject.content,
+          opp.targetPassage,
+          opp.proposedText || '',
+          opp.linkUrl,
+          opp.suggestedAnchor
+        );
+      } else {
+        res = applyHyperlinkToHtml(
+          activeProject.content,
+          opp.suggestedAnchor,
+          opp.linkUrl,
+          opp.targetPassage
+        );
+      }
+
+      if (!res.applied || !isUrlAlreadyInDocument(opp.linkUrl, res.updatedHtml)) {
+        // Use the verification reason if we have one from resolveLinkOpportunityLocation
+        let detailedReason = '';
+        if (editor) {
+          const v = resolveLinkOpportunityLocation(opp, editor.getHTML(), editor);
+          if (!v.isVerified) detailedReason = v.reason;
+        }
+
+        const errorMsg = detailedReason || (opp.workflowType === 'suggest_new' 
+          ? `Could not locate the context sentence to insert the new link. Please verify the draft text.`
+          : opp.workflowType === 'revise_existing'
+          ? `Could not locate the original passage to apply the revision. Please verify the draft text.`
+          : `Could not locate the passage or anchor "${opp.suggestedAnchor}" in the current draft. Please verify the draft text.`);
+        
+        toast.error('Insertion Not Applied', errorMsg);
+        return;
+      }
+      updatedHtml = res.updatedHtml;
+      syncLiveEditorContent(updatedHtml, activeProject.id);
     }
 
     const historyWithCheckpoint = createVersionSnapshot(activeProject, 'before_ai_edit', {
@@ -1262,13 +1335,11 @@ export default function App() {
       o.id === opp.id ? { ...o, status: 'accepted' as const } : o
     );
 
-    syncLiveEditorContent(res.updatedHtml, activeProject.id);
-
     handleUpdateActiveProject({
       ...activeProject,
-      content: res.updatedHtml,
+      content: updatedHtml,
       editingNotes: activeProject.editingNotes?.length
-        ? reconcileNotesWithHtmlContent(res.updatedHtml, activeProject.editingNotes)
+        ? reconcileNotesWithHtmlContent(updatedHtml, activeProject.editingNotes)
         : activeProject.editingNotes,
       linkOpportunities: updatedOpportunities,
       versionHistory: historyWithCheckpoint,
@@ -1279,32 +1350,85 @@ export default function App() {
   const handleAcceptAllLinkOpportunities = (opps: LinkOpportunity[]) => {
     if (!activeProject || opps.length === 0) return;
 
-    let currentHtml = activeProject.content;
+    const editor = editorRef.current;
+    let currentHtml = editor?.getHTML() || activeProject.content;
     const insertedIds: string[] = [];
     const skippedItems: string[] = [];
 
-    opps.forEach((opp) => {
-      if (!isValidUrl(opp.linkUrl)) {
-        skippedItems.push(`Invalid URL: ${opp.linkTitle}`);
-        return;
+    // Use editor chain for bulk if available
+    if (editor && !editor.isDestroyed) {
+      const chain = editor.chain().focus();
+      let editorAppliedCount = 0;
+
+      opps.forEach((opp) => {
+        if (!isValidUrl(opp.linkUrl)) {
+          skippedItems.push(`Invalid URL: ${opp.linkTitle}`);
+          return;
+        }
+        if (isUrlAlreadyInDocument(opp.linkUrl, currentHtml)) {
+          skippedItems.push(`Already linked: ${opp.linkTitle}`);
+          return;
+        }
+
+        const verification = resolveLinkOpportunityLocation(opp, currentHtml, editor);
+        if (verification.isVerified && verification.candidate) {
+          const { from, to } = verification.candidate;
+          const cleanHref = cleanTrackingParameters(opp.linkUrl);
+
+          if (opp.workflowType === 'suggest_new') {
+            const linkedNewSentence = opp.targetPassage.replace(
+              opp.suggestedAnchor,
+              `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${opp.suggestedAnchor}</a>`
+            );
+            chain.insertContentAt(to, ' ' + linkedNewSentence);
+          } else if (opp.workflowType === 'revise_existing') {
+            const linkedRevisedSentence = (opp.proposedText || '').replace(
+              opp.suggestedAnchor,
+              `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${opp.suggestedAnchor}</a>`
+            );
+            chain.insertContentAt({ from, to }, linkedRevisedSentence);
+          } else {
+            chain.setTextSelection({ from, to }).setLink({ href: cleanHref });
+          }
+          insertedIds.push(opp.id);
+          editorAppliedCount++;
+          // Rough approximation of updated HTML for idempotency check in loop
+          currentHtml += `<!-- ${opp.linkUrl} -->`; 
+        } else {
+          skippedItems.push(`${opp.suggestedAnchor}: ${verification.reason}`);
+        }
+      });
+
+      if (editorAppliedCount > 0) {
+        chain.run();
+        currentHtml = editor.getHTML();
       }
-      if (isUrlAlreadyInDocument(opp.linkUrl, currentHtml)) {
-        skippedItems.push(`Already linked: ${opp.linkTitle}`);
-        return;
-      }
-      const res = applyHyperlinkToHtml(
-        currentHtml,
-        opp.suggestedAnchor,
-        opp.linkUrl,
-        opp.targetPassage
-      );
-      if (res.applied && isUrlAlreadyInDocument(opp.linkUrl, res.updatedHtml)) {
-        currentHtml = res.updatedHtml;
-        insertedIds.push(opp.id);
-      } else {
-        skippedItems.push(`Passage not matched: ${opp.suggestedAnchor}`);
-      }
-    });
+    } else {
+      // Fallback to HTML string manipulation
+      opps.forEach((opp) => {
+        if (!isValidUrl(opp.linkUrl)) {
+          skippedItems.push(`Invalid URL: ${opp.linkTitle}`);
+          return;
+        }
+        if (isUrlAlreadyInDocument(opp.linkUrl, currentHtml)) {
+          skippedItems.push(`Already linked: ${opp.linkTitle}`);
+          return;
+        }
+        const res = applyHyperlinkToHtml(
+          currentHtml,
+          opp.suggestedAnchor,
+          opp.linkUrl,
+          opp.targetPassage
+        );
+        if (res.applied && isUrlAlreadyInDocument(opp.linkUrl, res.updatedHtml)) {
+          currentHtml = res.updatedHtml;
+          insertedIds.push(opp.id);
+        } else {
+          skippedItems.push(`Passage not matched: ${opp.suggestedAnchor}`);
+        }
+      });
+      syncLiveEditorContent(currentHtml, activeProject.id);
+    }
 
     if (insertedIds.length === 0) {
       toast.error(
@@ -1321,8 +1445,6 @@ export default function App() {
     const updatedOpportunities = (activeProject.linkOpportunities || []).map((o) =>
       insertedIds.includes(o.id) ? { ...o, status: 'accepted' as const } : o
     );
-
-    syncLiveEditorContent(currentHtml, activeProject.id);
 
     handleUpdateActiveProject({
       ...activeProject,

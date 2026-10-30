@@ -10,6 +10,7 @@ import { LinkOpportunity, InternalLink } from '../../types/internalLink';
 import { storage } from '../../services/storage';
 import { geminiService } from '../../services/geminiClient';
 import { extractUrlsFromHtml, normalizeUrlForComparison, formatDestinationType } from '../../utils/urlUtils';
+import { resolveLinkOpportunityLocation, LocationVerificationResult } from '../../utils/editorLinkUtils';
 import { toast } from '../../services/toastService';
 import {
   Link2,
@@ -28,206 +29,7 @@ import {
   MapPin,
 } from 'lucide-react';
 
-export interface LocationVerificationResult {
-  isVerified: boolean;
-  reason: string;
-  candidate?: {
-    from: number;
-    to: number;
-    text: string;
-    score: number;
-    matchType: 'link_mark_and_anchor' | 'link_mark_only' | 'anchor_text_only';
-  };
-}
-
-export function verifyOpportunityLocation(
-  opp: LinkOpportunity,
-  contentHtml: string,
-  editor?: any
-): LocationVerificationResult {
-  const isSuggestNew = opp.workflowType === 'suggest_new';
-  const targetUrl = opp.linkUrl || '';
-  const targetAnchor = (opp.suggestedAnchor || '').trim().toLowerCase();
-  const targetPassage = (opp.targetPassage || '').trim().toLowerCase();
-  const contextSentence = (opp.contextSentence || '').trim().toLowerCase();
-  const normTargetUrl = normalizeUrlForComparison(targetUrl);
-
-  const getParentBlockText = (doc: any, pos: number): string => {
-    try {
-      const docSize = doc.content.size;
-      const safePos = Math.min(Math.max(0, pos), docSize);
-      const $pos = doc.resolve(safePos);
-      return ($pos.parent?.textContent || '').toLowerCase();
-    } catch (e) {
-      return '';
-    }
-  };
-
-  const expandLinkRange = (
-    doc: any,
-    startPos: number,
-    linkMark: any
-  ): { from: number; to: number; text: string } => {
-    let from = startPos;
-    const startNode = doc.nodeAt(startPos);
-    let to = startPos + (startNode?.nodeSize || 0);
-    const targetHref = normalizeUrlForComparison(linkMark?.attrs?.href || '');
-
-    try {
-      const $start = doc.resolve(startPos);
-      const parentStart = $start.start($start.depth);
-      let checkPos = startPos;
-      while (checkPos > parentStart) {
-        const prevNode = doc.nodeAt(checkPos - 1);
-        if (!prevNode || !prevNode.isText) break;
-        const prevLink = prevNode.marks?.find(
-          (m: any) =>
-            m.type.name === 'link' && normalizeUrlForComparison(m.attrs?.href || '') === targetHref
-        );
-        if (prevLink) {
-          checkPos -= prevNode.nodeSize;
-          from = checkPos;
-        } else {
-          break;
-        }
-      }
-    } catch (e) {}
-
-    try {
-      const $start = doc.resolve(startPos);
-      const parentEnd = $start.end($start.depth);
-      let checkPos = to;
-      while (checkPos < parentEnd) {
-        const nextNode = doc.nodeAt(checkPos);
-        if (!nextNode || !nextNode.isText) break;
-        const nextLink = nextNode.marks?.find(
-          (m: any) =>
-            m.type.name === 'link' && normalizeUrlForComparison(m.attrs?.href || '') === targetHref
-        );
-        if (nextLink) {
-          to += nextNode.nodeSize;
-          checkPos = to;
-        } else {
-          break;
-        }
-      }
-    } catch (e) {}
-
-    const text = doc.textBetween(from, to, ' ');
-    return { from, to, text };
-  };
-
-  // If already accepted/inserted, we only verify the presence of the URL
-  if (opp.status === 'accepted') {
-    if (contentHtml) {
-      const urlsInHtml = extractUrlsFromHtml(contentHtml);
-      const hasMatchingUrlInHtml =
-        normTargetUrl && urlsInHtml.some((u) => normalizeUrlForComparison(u) === normTargetUrl);
-      if (hasMatchingUrlInHtml) {
-        return { isVerified: true, reason: 'Link verified in document.' };
-      }
-    }
-  }
-
-  // Workflow A: match_existing
-  if (!isSuggestNew) {
-    if (editor?.state?.doc) {
-      const doc = editor.state.doc;
-      const candidates: Array<{
-        from: number;
-        to: number;
-        text: string;
-        score: number;
-        matchType: 'link_mark_and_anchor' | 'link_mark_only' | 'anchor_text_only';
-      }> = [];
-      const visitedRanges = new Set<string>();
-
-      doc.descendants((node: any, pos: number) => {
-        if (node.isText && node.text) {
-          const nodeText = node.text.toLowerCase();
-          let idx = nodeText.indexOf(targetAnchor);
-          while (idx !== -1) {
-            const from = pos + idx;
-            const to = from + targetAnchor.length;
-            const rangeKey = `${from}-${to}`;
-
-            if (!visitedRanges.has(rangeKey)) {
-              visitedRanges.add(rangeKey);
-              let score = 30;
-              const parentText = getParentBlockText(doc, pos);
-              if (targetPassage && (parentText.includes(targetPassage.slice(0, 30)) || targetPassage.includes(parentText))) {
-                score += 40;
-              }
-
-              candidates.push({
-                from,
-                to,
-                text: node.text.slice(idx, idx + targetAnchor.length),
-                score,
-                matchType: 'anchor_text_only',
-              });
-            }
-            idx = nodeText.indexOf(targetAnchor, idx + 1);
-          }
-        }
-      });
-
-      candidates.sort((a, b) => b.score - a.score);
-
-      if (candidates.length > 0) {
-        return {
-          isVerified: true,
-          reason: 'Existing anchor verified in draft.',
-          candidate: candidates[0],
-        };
-      }
-    }
-
-    if (contentHtml) {
-      const plainText = contentHtml.replace(/<[^>]+>/g, ' ').toLowerCase();
-      if (targetAnchor && plainText.includes(targetAnchor)) {
-        return { isVerified: true, reason: 'Existing anchor verified in saved content.' };
-      }
-    }
-  } 
-  
-  // Workflow B: suggest_new
-  else {
-    if (editor?.state?.doc) {
-      const doc = editor.state.doc;
-      let foundContext = false;
-      let candidate: any = null;
-
-      doc.descendants((node: any, pos: number) => {
-        if (node.isText && node.text) {
-          const nodeText = node.text.toLowerCase();
-          if (contextSentence && nodeText.includes(contextSentence.slice(0, 40))) {
-            foundContext = true;
-            candidate = { from: pos, to: pos + node.text.length, text: node.text };
-          }
-        }
-      });
-
-      if (foundContext) {
-        return { isVerified: true, reason: 'Context sentence verified in draft.', candidate };
-      }
-    }
-
-    if (contentHtml) {
-      const plainText = contentHtml.replace(/<[^>]+>/g, ' ').toLowerCase();
-      if (contextSentence && plainText.includes(contextSentence.slice(0, 40))) {
-        return { isVerified: true, reason: 'Context sentence verified in saved content.' };
-      }
-    }
-  }
-
-  return {
-    isVerified: false,
-    reason: isSuggestNew
-      ? `Could not locate context sentence: "${contextSentence.slice(0, 60)}..."`
-      : `Could not locate existing anchor: "${targetAnchor}"`,
-  };
-}
+// verifyOpportunityLocation replaced by resolveLinkOpportunityLocation in editorLinkUtils.ts
 
 function renderSentencePreview(passage: string, anchor: string, previewText?: string) {
   const text = (passage || previewText || '').trim();
@@ -298,7 +100,7 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
 
   // Check which opportunities are stale or unverified using unified location verification
   const isOpportunityStale = (opp: LinkOpportunity): boolean => {
-    const res = verifyOpportunityLocation(opp, project.content, editorRef?.current);
+    const res = resolveLinkOpportunityLocation(opp, project.content, editorRef?.current);
     return !res.isVerified;
   };
 
@@ -520,24 +322,33 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
                     {/* Header: Destination Type, Title, URL & Status */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="space-y-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span
-                            className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
-                              opp.destinationType === 'product'
-                                ? 'text-purple-900 bg-purple-50 border-purple-200'
-                                : opp.destinationType === 'shop_guide'
-                                ? 'text-amber-900 bg-amber-50 border-amber-200'
-                                : 'text-blue-900 bg-blue-50 border-blue-200'
-                            }`}
-                          >
-                            {formatDestinationType(opp.destinationType || 'article')}
-                          </span>
-                          {opp.relevance && (
-                            <span className="text-[10px] text-[#736c61]">
-                              · {opp.relevance === 'high' ? 'High Relevance' : 'Medium Relevance'}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                                opp.destinationType === 'product'
+                                  ? 'text-purple-900 bg-purple-50 border-purple-200'
+                                  : opp.destinationType === 'shop_guide'
+                                  ? 'text-amber-900 bg-amber-50 border-amber-200'
+                                  : 'text-blue-900 bg-blue-50 border-blue-200'
+                              }`}
+                            >
+                              {formatDestinationType(opp.destinationType || 'article')}
                             </span>
-                          )}
-                        </div>
+                            {opp.workflowType && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 border border-stone-200">
+                                {opp.workflowType.replace('_', ' ')}
+                              </span>
+                            )}
+                            {opp.confidence && (
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                opp.confidence === 'high' ? 'text-emerald-900 bg-emerald-50 border-emerald-200' :
+                                opp.confidence === 'medium' ? 'text-amber-900 bg-amber-50 border-amber-200' :
+                                'text-stone-900 bg-stone-50 border-stone-200'
+                              }`}>
+                                {opp.confidence.toUpperCase()} CONFIDENCE
+                              </span>
+                            )}
+                          </div>
 
                         <h5 className="font-editorial text-sm font-bold text-[#1e232a] leading-tight">
                           {opp.linkTitle}
@@ -567,6 +378,31 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
                       )}
                     </div>
 
+                    {/* Reader Benefit & Editorial Rationale */}
+                    <div className="space-y-3">
+                      <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-lg space-y-1">
+                        <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-blue-900">
+                          <Sparkles className="w-3 h-3" />
+                          <span>Reader Benefit</span>
+                        </div>
+                        <p className="text-xs text-blue-950 font-medium">
+                          {opp.readerBenefit || opp.reason}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1 text-[11px] leading-relaxed">
+                        <div className="text-[#4a443b]">
+                          <strong className="text-[#1e232a]">Editorial Rationale:</strong> {opp.relevanceRationale || opp.seoRationale}
+                        </div>
+                        {opp.verificationNotes && (
+                          <div className="p-2 bg-amber-50 border border-amber-200 rounded text-amber-900 font-medium flex items-start gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span><strong>Verification Needed:</strong> {opp.verificationNotes}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     {/* Passage, Proposed Anchor, and Sentence Preview */}
                     <div className="p-3 bg-[#faf9f6] border border-[#ede7db] rounded-lg space-y-3">
                       {opp.workflowType === 'suggest_new' ? (
@@ -588,6 +424,27 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
                             </span>
                             <div className="font-editorial text-xs text-[#1e232a] bg-white p-2.5 rounded-md border border-blue-100 shadow-sm leading-relaxed">
                               {renderSentencePreview(opp.targetPassage, opp.suggestedAnchor)}
+                            </div>
+                          </div>
+                        </>
+                      ) : opp.workflowType === 'revise_existing' ? (
+                        <>
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] block">
+                              Original Document Passage
+                            </span>
+                            <p className="font-editorial text-xs text-rose-900 bg-rose-50/30 p-2 rounded border border-rose-100 italic">
+                              "{opp.targetPassage}"
+                            </p>
+                          </div>
+
+                          <div className="space-y-1 pt-2 border-t border-[#f0ece1]">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5c5447] flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                              <span>Proposed Revision</span>
+                            </span>
+                            <div className="font-editorial text-xs text-emerald-950 bg-emerald-50/30 p-2.5 rounded-md border border-emerald-100 shadow-sm leading-relaxed">
+                              {renderSentencePreview(opp.proposedText || '', opp.suggestedAnchor)}
                             </div>
                           </div>
                         </>
@@ -618,24 +475,6 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
                             </p>
                           </div>
                         </>
-                      )}
-
-                      {opp.minimalRevision && (
-                        <div className="p-2 bg-amber-50/90 border border-amber-200 rounded text-[11px] text-amber-950">
-                          <strong className="text-amber-900">Suggested Phrasing:</strong> "{opp.minimalRevision}"
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Editorial Reason & SEO Rationale */}
-                    <div className="space-y-1 text-[11px] leading-relaxed">
-                      <div className="text-[#5c5447]">
-                        <strong className="text-[#1e232a]">Editorial Value:</strong> {opp.reason}
-                      </div>
-                      {opp.seoRationale && (
-                        <div className="text-[#4a443b]">
-                          <strong className="text-[#1e232a]">SEO Rationale:</strong> {opp.seoRationale}
-                        </div>
                       )}
                     </div>
 
@@ -756,7 +595,7 @@ export const LinkOpportunitiesDrawer: React.FC<LinkOpportunitiesDrawerProps> = (
 
       {/* VIEW LOCATION MODAL */}
       {viewingLocationOpp && (() => {
-        const verification = verifyOpportunityLocation(
+        const verification = resolveLinkOpportunityLocation(
           viewingLocationOpp,
           project.content,
           editorRef?.current

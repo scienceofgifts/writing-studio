@@ -72,10 +72,13 @@ export async function validateFirestoreConnection(): Promise<boolean> {
     await getDocFromServer(doc(db, '_health', 'connection'));
     return true;
   } catch (error: any) {
-    if (error?.message?.includes('the client is offline') || error?.code === 'unavailable') {
+    const msg = error?.message || '';
+    if (msg.includes('the client is offline') || error?.code === 'unavailable') {
       console.warn('Firestore is currently unreachable or offline.');
+    } else if (msg.includes('token-service-api-has-not-been-used-in-project')) {
+      console.error('CRITICAL: Secure Token Service API is disabled in your Google Cloud project.');
     } else {
-      console.warn('Firestore connection health check result:', error?.message || error);
+      console.warn('Firestore connection health check result:', msg || error);
     }
     return false;
   }

@@ -30,16 +30,23 @@ export interface LinkOpportunity {
   linkTitle: string;
   linkUrl: string;
   destinationType?: LinkDestinationType;
-  targetPassage: string; // The surrounding sentence or clause in the text
-  suggestedAnchor: string; // The natural phrase within the passage to link
-  reason: string; // Editorial justification for why this link helps the reader
-  seoRationale?: string; // SEO rationale / search intent match / commercial relevance
-  previewText?: string; // Preview of sentence with anchor inserted
-  minimalRevision?: string; // Optional suggested minimal revision for review
-  workflowType?: 'match_existing' | 'suggest_new';
-  contextSentence?: string; // For suggest_new: the existing sentence after which to insert
-  relevance?: 'high' | 'medium';
+  workflowType: 'match_existing' | 'revise_existing' | 'suggest_new';
+  targetPassage: string; // The original sentence (for match/revise) OR the proposed sentence (for suggest_new)
+  suggestedAnchor: string; // The exact phrase to link within the final sentence
+  proposedText?: string; // The full revised sentence (for revise_existing)
+  contextSentence?: string; // The existing sentence in the draft after which to insert (for suggest_new)
+  readerBenefit: string; // Concise explanation of how this link provides value to a human reader
+  relevanceRationale: string; // Deep editorial justification for why the destination belongs at this exact point
+  confidence: 'high' | 'medium' | 'low';
+  verificationNotes?: string; // Any uncertainty or factual details requiring human verification
   status: LinkOpportunityStatus;
+
+  // Legacy fields for backward compatibility
+  reason?: string; // Mapped to readerBenefit
+  seoRationale?: string; // Mapped to relevanceRationale
+  previewText?: string;
+  minimalRevision?: string; // Mapped to proposedText
+  relevance?: 'high' | 'medium'; // Mapped to confidence
 }
 
 export interface FindLinkOpportunitiesRequest {

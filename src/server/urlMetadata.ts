@@ -122,9 +122,14 @@ export function isPrivateOrReservedIP(ip: string): boolean {
  * Validates a target URL against SSRF rules and resolves hostname IPs.
  */
 export async function validateUrlSafety(urlStr: string): Promise<URL> {
+  let formatted = (urlStr || '').trim();
+  if (!/^https?:\/\//i.test(formatted)) {
+    formatted = `https://${formatted}`;
+  }
+
   let parsed: URL;
   try {
-    parsed = new URL(urlStr);
+    parsed = new URL(formatted);
   } catch {
     throw new Error('Malformed URL provided.');
   }
@@ -156,23 +161,27 @@ export async function validateUrlSafety(urlStr: string): Promise<URL> {
     throw new Error(`Access to private IP address "${hostname}" is prohibited.`);
   }
 
-  // Resolve hostname via DNS to verify target IP addresses
-  try {
-    const addresses = await dns.promises.lookup(hostname, { all: true });
-    if (!addresses || addresses.length === 0) {
-      throw new Error(`Could not resolve hostname "${hostname}".`);
-    }
+  // Resolve hostname via DNS to verify target IP addresses (when supported by runtime)
+  if (dns && typeof dns.promises?.lookup === 'function') {
+    try {
+      const addresses = await dns.promises.lookup(hostname, { all: true });
+      if (!addresses || addresses.length === 0) {
+        throw new Error(`Could not resolve hostname "${hostname}".`);
+      }
 
-    for (const addr of addresses) {
-      if (isPrivateOrReservedIP(addr.address)) {
-        throw new Error(`Host "${hostname}" resolved to prohibited private/local IP ${addr.address}.`);
+      for (const addr of addresses) {
+        if (isPrivateOrReservedIP(addr.address)) {
+          throw new Error(`Host "${hostname}" resolved to prohibited private/local IP ${addr.address}.`);
+        }
+      }
+    } catch (dnsErr: any) {
+      if (dnsErr.code === 'ENOTFOUND' || dnsErr.code === 'EAI_AGAIN') {
+        throw new Error(`Domain "${hostname}" does not exist or DNS lookup failed.`);
+      }
+      if (dnsErr.code !== 'ERR_NOT_IMPLEMENTED' && !dnsErr.message?.includes('not supported')) {
+        throw dnsErr;
       }
     }
-  } catch (dnsErr: any) {
-    if (dnsErr.code === 'ENOTFOUND' || dnsErr.code === 'EAI_AGAIN') {
-      throw new Error(`Domain "${hostname}" does not exist or DNS lookup failed.`);
-    }
-    throw dnsErr;
   }
 
   return parsed;
@@ -185,7 +194,10 @@ export async function fetchHtmlWithSecurity(
   initialUrl: string,
   maxRedirects = 5
 ): Promise<{ html: string; finalUrl: string }> {
-  let currentUrl = initialUrl;
+  let currentUrl = (initialUrl || '').trim();
+  if (!/^https?:\/\//i.test(currentUrl)) {
+    currentUrl = `https://${currentUrl}`;
+  }
   let redirectCount = 0;
   const visitedUrls = new Set<string>();
 
@@ -382,11 +394,17 @@ export function derivePreferredAnchor(title: string, topic?: string): string {
   // Lowercase the phrase so it embeds naturally in sentence copy
   anchor = anchor.toLowerCase();
 
-  // Truncate if overly long (keep under 8 words)
+  // Strip trailing site or subtitle punctuation
+  anchor = anchor.replace(/[:\-–—|].*$/, '').trim();
+
+  // Truncate if overly long (keep under 7 words)
   const words = anchor.split(/\s+/);
-  if (words.length > 8) {
-    anchor = words.slice(0, 8).join(' ');
+  if (words.length > 7) {
+    anchor = words.slice(0, 7).join(' ');
   }
+
+  // Strip trailing prepositions/articles so anchor text doesn't end abruptly (e.g. "why visible gifts last longer: the")
+  anchor = anchor.replace(/\s+(?:the|an?|of|in|to|for|with|on|at|from|by|and|or|but|behind|about|into|over|under|through|between|is|are|was|were|be|been)$/i, '');
 
   return anchor.trim();
 }
@@ -514,13 +532,15 @@ export function extractMetadataFromHtml(
     const pMatches = articleSection.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi);
     for (const p of pMatches) {
       const cleanP = stripHtmlTags(decodeHtmlEntities(p[1]));
-      // Skip short nav/cookie/newsletter snippets
+      // Skip short nav/cookie/newsletter/byline snippets
       if (
         cleanP.length >= 60 &&
         !cleanP.toLowerCase().includes('cookie') &&
         !cleanP.toLowerCase().includes('subscribe') &&
         !cleanP.toLowerCase().includes('newsletter') &&
-        !cleanP.toLowerCase().includes('all rights reserved')
+        !cleanP.toLowerCase().includes('all rights reserved') &&
+        !cleanP.toLowerCase().includes('min read') &&
+        !/^(updated|published|by\s+[a-z]|date:|posted:)/i.test(cleanP)
       ) {
         description = cleanP.slice(0, 240);
         // Cut cleanly at last space
@@ -651,7 +671,7 @@ Return ONLY a valid JSON object matching this schema:
 }`;
 
       const res = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
+        model: 'gemini-3-flash-preview',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -680,6 +700,7 @@ Return ONLY a valid JSON object matching this schema:
           notes: parsed.notes || extracted.notes,
           canonicalUrl: parsed.canonicalUrl || extracted.canonicalUrl,
           resolvedUrl: finalUrl,
+          destinationType: extracted.destinationType,
         };
       }
     } catch (aiErr: any) {

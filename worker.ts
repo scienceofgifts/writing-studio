@@ -24,6 +24,8 @@ import {
   normalizeCreativeDirectionOutput,
   CreativeDirectionRegenerateTarget,
 } from './src/utils/productCreativeDirectionUtils';
+import { validateInternalLinkUrl } from './src/utils/urlUtils';
+import { fetchUrlMetadata, fetchProductUrlMetadata } from './src/server/urlMetadata';
 
 export interface Env {
   GEMINI_API_KEY?: string;
@@ -560,12 +562,21 @@ export async function handleApiRequest(
         return jsonResponse({ ok: true, opportunities: [], rationale: 'No active links available in library.' });
       }
 
-      const systemInstruction = `You are senior editor and SEO linking strategist for "Science of Gifts".
-Your mission is to identify 2-5 high-value internal link opportunities from the library that provide genuine editorial value to the reader.
+      const systemInstruction = `You are senior editorial director and link strategist for "Science of Gifts".
+Your mission is to identify 2-5 high-value internal link opportunities that provide genuine editorial value to a human reader.
+
+STRICT EDITORIAL RULES:
+1. VALUE OVER KEYWORDS: Never link solely based on shared keywords or broad topics. A link must provide useful context, deeper explanation, a relevant example, or a practical next step.
+2. BROADER CONTEXT: Consider the article's full argument and the specific paragraph's role. Don't evaluate sentences in isolation.
+3. BEST LOCATION: For each destination, find the single best location in the article. Avoid redundant links serving the same purpose.
+4. NATURAL FLOW: If a link would feel forced or distracting, DO NOT suggest it. It is better to return 0 suggestions than 1 poor suggestion.
+5. NO FABRICATION: Never invent facts about the destination article or product. Use provided library descriptions only.
+6. URL INTEGRITY (CRITICAL): Use the EXACT "url" provided for each library item. NEVER invent, guess, prefix, or modify a URL. If you cannot find a suitable place for any provided link, return an empty array.
 
 WORKFLOWS:
-1. "match_existing": Use when an existing sentence naturally contains a phrase that can be hyperlinked to a library item.
-2. "suggest_new": Use when a library item is highly relevant but the current draft lacks a natural anchor. Propose a new, unhurried sentence (12-20 words) that introduces the topic and fits naturally into the article's flow.
+1. "match_existing": Use when the article already contains a natural, meaningful phrase.
+2. "revise_existing": Use when a small, editorially sound revision (minimal changes) would make the link more natural or useful while preserving the author's meaning and voice.
+3. "suggest_new": Use when the destination is highly relevant but no suitable existing passage exists. Propose a meaningful, self-contained sentence (12-20 words) that contributes to the article's flow.
 
 JSON SCHEMA:
 {
@@ -574,25 +585,35 @@ JSON SCHEMA:
     "linkTitle": "string",
     "linkUrl": "string",
     "destinationType": "article|shop_guide|product|category",
-    "workflowType": "match_existing|suggest_new",
-    "targetPassage": "VERBATIM existing sentence (for match_existing) OR the proposed new sentence (for suggest_new)",
-    "suggestedAnchor": "The exact phrase to link within targetPassage",
+    "workflowType": "match_existing|revise_existing|suggest_new",
+    "targetPassage": "Verbatim original sentence (for match/revise) OR the proposed new sentence (for suggest_new)",
+    "suggestedAnchor": "The exact phrase to link within the final sentence",
+    "proposedText": "For revise_existing: the full revised sentence. For others: omit or repeat targetPassage.",
     "contextSentence": "For suggest_new: the exact existing sentence in the draft AFTER WHICH the new sentence should be inserted",
-    "reason": "Editorial justification",
-    "seoRationale": "Search intent match",
-    "relevance": "high|medium"
+    "readerBenefit": "Concise explanation of how this link helps a human reader at this exact point",
+    "relevanceRationale": "Deep editorial justification for why the destination belongs here specifically",
+    "confidence": "high|medium|low",
+    "verificationNotes": "Any uncertainty or factual details requiring human verification"
   }],
-  "rationale": "Overall strategy"
+  "rationale": "Overall linking strategy for this article"
 }`;
 
       const userPrompt = `PROJECT: "${projectTitle}"
-DOC:
+DOC (Current Draft):
 """
 ${documentContent}
 """
 
-LIBRARY:
-${JSON.stringify(activeLinks)}`;
+LIBRARY (Available Destinations):
+${JSON.stringify(activeLinks.map(l => ({
+  id: l.id,
+  title: l.title,
+  url: l.url,
+  topic: l.topic,
+  description: l.description,
+  preferredAnchor: l.preferredAnchor,
+  destinationType: l.destinationType
+})), null, 2)}`;
 
       const { response, modelUsed } = await generateContentWithFallback(ai, modelToUse, {
         contents: userPrompt,
@@ -606,22 +627,53 @@ ${JSON.stringify(activeLinks)}`;
       }
 
       const sanitized = opportunitiesList.map((o: any, idx: number) => {
-        const workflowType = o.workflowType === 'suggest_new' ? 'suggest_new' : 'match_existing';
+        const workflowType = ['match_existing', 'revise_existing', 'suggest_new'].includes(o.workflowType) 
+          ? o.workflowType 
+          : 'match_existing';
+
+        // Ground-truth URL validation using the utility
+        const { validatedUrl, wasCorrected } = validateInternalLinkUrl(
+          o.linkUrl || '',
+          o.linkId || '',
+          activeLinks
+        );
+
+        let confidence = o.confidence || 'medium';
+        let verificationNotes = o.verificationNotes || '';
+
+        if (!validatedUrl) {
+          confidence = 'low';
+          verificationNotes = (verificationNotes ? verificationNotes + ' ' : '') + 'Warning: Could not verify destination URL against library.';
+        } else if (wasCorrected) {
+          verificationNotes = (verificationNotes ? verificationNotes + ' ' : '') + 'URL corrected from library ID match.';
+        }
+
+        const idMatch = activeLinks.find(l => l.id === o.linkId);
+
         return {
           id: `opp-${Date.now()}-${idx}`,
-          linkId: o.linkId || `link-${idx}`,
-          linkTitle: o.linkTitle || 'Science of Gifts Destination',
-          linkUrl: o.linkUrl || '',
-          destinationType: o.destinationType || 'article',
+          linkId: o.linkId || (idMatch?.id) || `link-${idx}`,
+          linkTitle: o.linkTitle || (idMatch?.title) || 'Science of Gifts Destination',
+          linkUrl: validatedUrl || o.linkUrl || '',
+          destinationType: o.destinationType || (idMatch?.destinationType) || 'article',
           workflowType,
           targetPassage: o.targetPassage || '',
           suggestedAnchor: o.suggestedAnchor || '',
+          proposedText: o.proposedText || undefined,
           contextSentence: o.contextSentence || '',
-          reason: o.reason || 'Contextual reference providing value to the reader.',
-          seoRationale: o.seoRationale || 'Matches search intent.',
-          previewText: o.previewText || (o.targetPassage && o.suggestedAnchor ? o.targetPassage.replace(o.suggestedAnchor, `[${o.suggestedAnchor}]`) : undefined),
-          relevance: o.relevance || 'high',
+          readerBenefit: o.readerBenefit || o.reason || 'Contextual reference providing value to the reader.',
+          relevanceRationale: o.relevanceRationale || o.seoRationale || 'Matches contextual relevance.',
+          confidence,
+          verificationNotes: verificationNotes || undefined,
           status: 'pending',
+          
+          // Legacy mappings
+          reason: o.readerBenefit || o.reason,
+          seoRationale: o.relevanceRationale || o.seoRationale,
+          previewText: workflowType === 'suggest_new' 
+            ? o.targetPassage 
+            : (o.proposedText || o.targetPassage),
+          relevance: confidence === 'high' ? 'high' : 'medium'
         };
       });
 
@@ -1396,60 +1448,16 @@ Output ONLY valid JSON matching:
       if (!inputUrl || typeof inputUrl !== 'string' || !inputUrl.trim()) {
         throw new Error('URL is required for link metadata');
       }
-      const targetUrl = inputUrl.trim();
-      const fetchRes = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-      });
 
-      if (!fetchRes.ok) {
-        throw new Error(`Failed to fetch target URL (Status: ${fetchRes.status})`);
+      let targetUrl = inputUrl.trim();
+      if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = `https://${targetUrl}`;
       }
 
-      const html = await fetchRes.text();
-      const getMeta = (names: string[]) => {
-        for (const name of names) {
-          const regex = new RegExp(`<meta\\s+(?:name|property|itemprop)=["']${name}["']\\s+content=["']([^"']+)["']`, 'i');
-          const m = html.match(regex);
-          if (m && m[1]) return m[1].trim();
-        }
-        return '';
-      };
-
-      const rawTitle = getMeta(['og:title', 'twitter:title', 'title']) ||
-        (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() || 'Science of Gifts Article');
-      const cleanTitle = rawTitle.replace(/\s*(?:\||–|—|-)\s*(?:Science of Gifts|Blog|Home|Shop|Store).*$/i, '').trim();
-
-      let description = getMeta(['description', 'og:description', 'twitter:description']);
-      if (!description && html) {
-        const pMatch = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-        if (pMatch && pMatch[1]) {
-          description = pMatch[1].replace(/<[^>]+>/g, '').trim().slice(0, 220);
-        }
-      }
-
-      const preferredAnchor = cleanTitle.toLowerCase().replace(/^(the|an?)\s+/i, '').split(/\s+/).slice(0, 6).join(' ');
-
-      let category = 'Editorial';
-      if (Array.isArray(existingCategories) && existingCategories.length > 0) {
-        const foundCat = existingCategories.find((c: string) => cleanTitle.toLowerCase().includes(c.toLowerCase()));
-        if (foundCat) category = foundCat;
-      }
-
+      const metadata = await fetchUrlMetadata(targetUrl, existingCategories, apiKey);
       return jsonResponse({
         ok: true,
-        metadata: {
-          title: cleanTitle || 'Destination Article',
-          description: description || 'Editorial article in Science of Gifts Library.',
-          topic: cleanTitle,
-          category,
-          destinationType: targetUrl.includes('/products/') ? 'product' : targetUrl.includes('/collections/') || targetUrl.includes('/pages/') ? 'shop_guide' : 'article',
-          preferredAnchor: preferredAnchor || 'editorial guide',
-          notes: `Contextual link destination: ${cleanTitle}`,
-          resolvedUrl: targetUrl,
-        },
+        metadata,
       });
     }
 
@@ -1459,68 +1467,23 @@ Output ONLY valid JSON matching:
       if (!inputUrl || typeof inputUrl !== 'string' || !inputUrl.trim()) {
         throw new Error('Product URL is required');
       }
-      const targetUrl = inputUrl.trim();
-      const fetchRes = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
+
+      let targetUrl = inputUrl.trim();
+      if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = `https://${targetUrl}`;
+      }
+
+      const metadata = await fetchProductUrlMetadata(targetUrl, {
+        topic: guideTopic,
+        audience: guideAudience,
       });
-
-      if (!fetchRes.ok) {
-        throw new Error(`Failed to fetch product URL (Status: ${fetchRes.status})`);
-      }
-
-      const html = await fetchRes.text();
-      const getMeta = (names: string[]) => {
-        for (const name of names) {
-          const regex = new RegExp(`<meta\\s+(?:name|property|itemprop)=["']${name}["']\\s+content=["']([^"']+)["']`, 'i');
-          const m = html.match(regex);
-          if (m && m[1]) return m[1].trim();
-        }
-        return '';
-      };
-
-      let productName = getMeta(['og:title', 'twitter:title']) || (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() || '');
-      productName = productName.replace(/\s*(?:\||–|—|-)\s*(?:Science of Gifts|Shop|Store).*$/i, '').trim();
-
-      let imageUrl = getMeta(['og:image', 'twitter:image']);
-      let summary = getMeta(['description', 'og:description', 'twitter:description']);
-      let materials = '';
-      let productType = 'Curated Instrument';
-
-      const jsonLdMatch = html.match(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
-      if (jsonLdMatch && jsonLdMatch[1]) {
-        try {
-          const json = JSON.parse(jsonLdMatch[1]);
-          const item = Array.isArray(json) ? json[0] : (json['@graph'] ? json['@graph'].find((g: any) => g['@type'] === 'Product') : json);
-          if (item) {
-            if (item.name) productName = item.name;
-            if (item.description) summary = item.description;
-            if (item.image) imageUrl = typeof item.image === 'string' ? item.image : (Array.isArray(item.image) ? item.image[0] : item.image?.url);
-            if (item.material) materials = Array.isArray(item.material) ? item.material.join(', ') : String(item.material);
-            if (item.category) productType = item.category;
-          }
-        } catch {}
-      }
 
       return jsonResponse({
         ok: true,
-        metadata: {
-          name: productName || 'Curated Product',
-          productType,
-          summary: summary || 'Curated item from Science of Gifts collection.',
-          materialDetails: materials || 'Traditional honest materials',
-          historicalContext: 'Rooted in proven workshop heritage.',
-          designDetails: 'Solid construction and tactile finish.',
-          whyItFits: `Complements ${guideTopic || 'the curated gift collection'} with authentic quality.`,
-          bestFor: `Discerning recipients and ${guideAudience || 'enthusiasts'} seeking lasting utility.`,
-          buyerConsiderations: 'Simple maintenance ensures decades of service.',
-          imageUrl: imageUrl || '',
-          resolvedUrl: targetUrl,
-        },
+        metadata,
       });
     }
+
 
     // 17. POST /api/products/analyze-research
     if (pathname === '/api/products/analyze-research' && request.method === 'POST') {

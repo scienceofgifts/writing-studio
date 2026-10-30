@@ -327,8 +327,15 @@ class SyncEngine {
       this.notifyStatusChange();
     } catch (err: any) {
       console.error('Initial sync error:', err);
-      this.status = 'error';
-      this.errorMessage = err?.message || 'Failed to initialize cloud synchronization.';
+      
+      const errorStr = err?.message || String(err);
+      if (errorStr.includes('token-service-api-has-not-been-used-in-project') || errorStr.includes('securetoken.googleapis.com')) {
+        this.status = 'offline';
+        this.errorMessage = 'Cloud Sync is disabled. The "Secure Token Service API" must be enabled in your Google Cloud Console for this project ID.';
+      } else {
+        this.status = 'error';
+        this.errorMessage = err?.message || 'Failed to initialize cloud synchronization.';
+      }
       this.notifyStatusChange();
     }
   }
